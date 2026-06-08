@@ -1,0 +1,60 @@
+MTGNP Master Card List — RFC-DNDMP-001  |  Fixed Pre-Defined Card Set															
+Card ID Base	Card Name	Card Type	Subtype	Color	CMC	W	U	B	R	G	Generic	Power	Toughness	Copies in Set	Simplified Effect
+mountain	Mountain	Land	Basic Mountain	R	0	0	0	0	0	0	0	-	-	20	Tap: Add {R}.
+forest	Forest	Land	Basic Forest	G	0	0	0	0	0	0	0	-	-	20	Tap: Add {G}.
+plains	Plains	Land	Basic Plains	W	0	0	0	0	0	0	0	-	-	20	Tap: Add {W}.
+island	Island	Land	Basic Island	U	0	0	0	0	0	0	0	-	-	20	Tap: Add {U}.
+swamp	Swamp	Land	Basic Swamp	B	0	0	0	0	0	0	0	-	-	20	Tap: Add {B}.
+lightning_bolt	Lightning Bolt	Instant		R	1	0	0	0	1	0	0	-	-	4	Lightning Bolt deals 3 damage to any target.
+shock	Shock	Instant		R	1	0	0	0	1	0	0	-	-	4	Shock deals 2 damage to any target.
+lava_spike	Lava Spike	Sorcery		R	1	0	0	0	1	0	0	-	-	4	Lava Spike deals 3 damage to target player.
+flame_slash	Flame Slash	Sorcery		R	1	0	0	0	1	0	0	-	-	4	Flame Slash deals 4 damage to target creature.
+searing_spear	Searing Spear	Instant		R	2	0	0	0	1	0	1	-	-	4	Searing Spear deals 3 damage to any target.
+skullcrack	Skullcrack	Instant		R	2	0	0	0	1	0	1	-	-	4	Players can't gain life this turn. Damage can't be prevented this turn. Skullcrack deals 3 damage to any target.
+rift_bolt	Rift Bolt	Sorcery		R	3	0	0	0	1	0	2	-	-	4	Rift Bolt deals 3 damage to any target. Suspend 1—{R}.
+incinerate	Incinerate	Instant		R	2	0	0	0	1	0	1	-	-	4	Incinerate deals 3 damage to any target. The damaged permanent or player can't be regenerated this turn.
+goblin_guide	Goblin Guide	Creature	Goblin Scout	R	1	0	0	0	1	0	0	2	2	4	Haste. Whenever Goblin Guide attacks, defending player reveals top card of library. If it's a land, that player puts it into their hand.
+goblin_bushwhacker	Goblin Bushwhacker	Creature	Goblin Warrior	R	1	0	0	0	1	0	0	1	1	4	Kicker {1}{R}. When this enters, if it was kicked, creatures you control get +1/+0 and gain haste until end of turn.
+reckless_wurm	Reckless Wurm	Creature	Wurm	R	5	0	0	0	1	0	3	4	4	4	Trample. Madness {2}{R}.
+monastery_swiftspear	Monastery Swiftspear	Creature	Human Monk	R	1	0	0	0	1	0	0	1	2	4	Haste. Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn).
+counterspell	Counterspell	Instant		U	2	0	2	0	0	0	0	-	-	4	Counter target spell.
+cancel	Cancel	Instant		U	3	0	2	0	0	0	1	-	-	4	Counter target spell.
+unsummon	Unsummon	Instant		U	1	0	1	0	0	0	0	-	-	4	Return target creature to its owner's hand.
+ponder	Ponder	Sorcery		U	1	0	1	0	0	0	0	-	-	4	Look at top 3 cards of your library, then put them back in any order. You may shuffle. Draw a card.
+negate	Negate	Instant		U	2	0	1	0	0	0	1	-	-	4	Counter target noncreature spell.
+mana_leak	Mana Leak	Instant		U	2	0	1	0	0	0	1	-	-	4	Counter target spell unless its controller pays {3}.
+merfolk_looter	Merfolk Looter	Creature	Merfolk Rogue	U	2	0	1	0	0	0	1	1	1	4	Tap: Draw a card, then discard a card.
+prodigal_sorcerer	Prodigal Sorcerer	Creature	Human Wizard	U	3	0	1	0	0	0	2	1	1	4	Tap: Prodigal Sorcerer deals 1 damage to any target.
+air_elemental	Air Elemental	Creature	Elemental	U	5	0	2	0	0	0	3	4	4	4	Flying.
+phantasmal_bear	Phantasmal Bear	Creature	Bear Illusion	U	1	0	1	0	0	0	0	2	2	4	Illusion. When Phantasmal Bear becomes the target of a spell or ability, sacrifice it.
+giant_growth	Giant Growth	Instant		G	1	0	0	0	0	1	0	-	-	4	Target creature gets +3/+3 until end of turn.
+rampant_growth	Rampant Growth	Sorcery		G	2	0	0	0	0	1	1	-	-	4	Search your library for a basic land, put it onto the battlefield tapped, then shuffle.
+naturalize	Naturalize	Instant		G	2	0	0	0	0	1	1	-	-	4	Destroy target artifact or enchantment.
+vines_of_vastwood	Vines of Vastwood	Instant		G	1	0	0	0	0	1	0	-	-	4	Kicker {G}. Target creature can't be the target of spells or abilities your opponents control this turn. If this spell was kicked, that creature gets +4/+4 until end of turn.
+llanowar_elves	Llanowar Elves	Creature	Elf Druid	G	1	0	0	0	0	1	0	1	1	4	Tap: Add {G}.
+elvish_mystic	Elvish Mystic	Creature	Elf Druid	G	1	0	0	0	0	1	0	1	1	4	Tap: Add {G}.
+grizzly_bears	Grizzly Bears	Creature	Bear	G	2	0	0	0	0	1	1	2	2	4	(No abilities.)
+leatherback_baloth	Leatherback Baloth	Creature	Beast	G	3	0	0	0	0	3	0	4	5	4	(No abilities.)
+troll_ascetic	Troll Ascetic	Creature	Troll Shaman	G	3	0	0	0	0	2	1	3	2	4	Hexproof. {1}{G}: Regenerate Troll Ascetic.
+wall_of_stone	Wall of Stone	Creature	Wall	R	3	0	0	0	2	0	1	0	8	4	Defender.
+swords_to_plowshares	Swords to Plowshares	Instant		W	1	1	0	0	0	0	0	-	-	4	Exile target creature. Its controller gains life equal to its power.
+path_to_exile	Path to Exile	Instant		W	1	1	0	0	0	0	0	-	-	4	Exile target creature. Its controller may search for a basic land, put it onto the battlefield tapped, then shuffle.
+healing_salve	Healing Salve	Instant		W	1	1	0	0	0	0	0	-	-	4	Choose one: Target player gains 3 life; or prevent the next 3 damage dealt to any target this turn.
+pacifism	Pacifism	Enchantment	Aura	W	2	1	0	0	0	0	1	-	-	4	Enchant creature. Enchanted creature can't attack or block.
+white_knight	White Knight	Creature	Human Knight	W	2	2	0	0	0	0	0	2	2	4	First strike. Protection from black.
+serra_angel	Serra Angel	Creature	Angel	W	5	2	0	0	0	0	3	4	4	4	Flying. Vigilance.
+savannah_lions	Savannah Lions	Creature	Cat	W	1	1	0	0	0	0	0	2	1	4	(No abilities.)
+mother_of_runes	Mother of Runes	Creature	Human Cleric	W	1	1	0	0	0	0	0	1	1	4	Tap: Target creature you control gains protection from the color of your choice until end of turn.
+dark_ritual	Dark Ritual	Instant		B	1	0	0	1	0	0	0	-	-	4	Add {B}{B}{B}.
+terror	Terror	Instant		B	2	0	0	1	0	0	1	-	-	4	Destroy target nonartifact, nonblack creature. It can't be regenerated.
+doom_blade	Doom Blade	Instant		B	2	0	0	1	0	0	1	-	-	4	Destroy target nonblack creature.
+raise_dead	Raise Dead	Sorcery		B	1	0	0	1	0	0	0	-	-	4	Return target creature card from your graveyard to your hand.
+mind_rot	Mind Rot	Sorcery		B	3	0	0	1	0	0	2	-	-	4	Target player discards two cards.
+gray_merchant	Gray Merchant of Asphodel	Creature	Zombie	B	5	0	0	2	0	0	3	2	4	4	When Gray Merchant enters, each opponent loses X life (X = your devotion to black). You gain that much life.
+gravedigger	Gravedigger	Creature	Zombie	B	4	0	0	1	0	0	3	2	2	4	When Gravedigger enters, return target creature card from your graveyard to your hand.
+royal_assassin	Royal Assassin	Creature	Human Assassin	B	3	0	0	2	0	0	1	1	1	4	Tap: Destroy target tapped creature.
+black_knight	Black Knight	Creature	Human Knight	B	2	0	0	2	0	0	0	2	2	4	First strike. Protection from white.
+sol_ring	Sol Ring	Artifact		C	1	0	0	0	0	0	1	-	-	4	Tap: Add {C}{C}.
+ornithopter	Ornithopter	Artifact Creature	Thopter	C	0	0	0	0	0	0	0	0	2	4	Flying.
+millstone	Millstone	Artifact		C	2	0	0	0	0	0	2	-	-	4	{2}, Tap: Target player mills 2 cards (puts top 2 cards of their library into their graveyard).
+rod_of_ruin	Rod of Ruin	Artifact		C	4	0	0	0	0	0	4	-	-	4	{3}, Tap: Rod of Ruin deals 1 damage to any target.
