@@ -1,0 +1,19 @@
+# Mono-red burn -- pairs with control.txt, green.txt or white.txt.
+#
+# Format: "<count> <card base>" expands to numbered instances
+# (4 lightning_bolt -> lightning_bolt_001 .. lightning_bolt_004),
+# or write a single card instance ID such as mountain_007 on its own line.
+#
+# The two players' decks must not share a card instance ID: both decks are drawn
+# from ONE shared fixed set, so each instance belongs to exactly one player.
+# Every deck shipped here uses a different set of cards, so any two can be paired.
+
+12 mountain
+
+4 lightning_bolt
+4 shock
+4 searing_spear
+4 lava_spike
+
+4 goblin_guide
+4 monastery_swiftspear

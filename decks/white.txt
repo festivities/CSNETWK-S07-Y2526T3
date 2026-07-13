@@ -1,0 +1,12 @@
+# Mono-white -- the best deck for demonstrating the First Strike Damage Step,
+# vigilance (Serra Angel does not tap when attacking) and flying.
+# Pairs with burn.txt, control.txt or green.txt (no shared card instances).
+
+12 plains
+
+4 savannah_lions
+4 white_knight
+2 serra_angel
+
+4 swords_to_plowshares
+4 healing_salve

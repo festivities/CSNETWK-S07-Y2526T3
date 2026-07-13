@@ -1,0 +1,20 @@
+# Blue/black control -- counterspells, removal, and enter-the-battlefield triggers.
+# Pairs with burn.txt, green.txt or white.txt (no shared card instances).
+#
+# Good deck for demonstrating: Counterspell on the stack, Doom Blade removal,
+# Gray Merchant's mandatory ETB trigger, Gravedigger's targeted ETB trigger
+# (TRIGGER_CHOICE), Prodigal Sorcerer's tap ability, and Millstone.
+
+8 island
+8 swamp
+
+4 counterspell
+4 doom_blade
+2 unsummon
+
+2 air_elemental
+2 gray_merchant
+2 gravedigger
+2 prodigal_sorcerer
+
+2 millstone

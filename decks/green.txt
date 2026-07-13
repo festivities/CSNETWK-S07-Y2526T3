@@ -1,0 +1,12 @@
+# Mono-green -- creature mana (Llanowar Elves, Elvish Mystic tap for {G}) plus
+# Giant Growth, which is handy for showing a spell fizzling when its target dies.
+# Pairs with burn.txt, control.txt or white.txt (no shared card instances).
+
+12 forest
+
+4 llanowar_elves
+4 elvish_mystic
+4 grizzly_bears
+4 leatherback_baloth
+
+4 giant_growth

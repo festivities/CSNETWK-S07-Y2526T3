@@ -1,0 +1,10 @@
+# An 8-card deck, matching the one used in the RFC's worked example.
+# Useful for demonstrating the DECK_EMPTY win condition quickly: the library runs
+# out after a couple of draw steps, and the next required draw ends the game.
+# Pairs with control.txt, green.txt or white.txt.
+
+3 mountain
+
+3 lightning_bolt
+1 shock
+1 goblin_guide
