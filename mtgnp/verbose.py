@@ -19,10 +19,14 @@ import threading
 class VerboseLogger:
     """Prints PDUs in a readable, clearly labelled format when enabled."""
 
-    def __init__(self, label: str, enabled: bool = False, pretty: bool = False):
+    def __init__(self, label: str, enabled: bool = False, pretty: bool = False,
+                 quiet: bool = False):
         self.label = label          # "SERVER" or "CLIENT"
         self.enabled = enabled
         self.pretty = pretty        # Indent the JSON body across several lines.
+        # Silence even the operational notes. Used by the test suite, which runs
+        # many servers at once and does not want their console output.
+        self.quiet = quiet
         # Printing happens from several threads (reader threads, the game
         # thread, the heartbeat thread), so serialise it to keep lines intact.
         self._lock = threading.Lock()
@@ -64,5 +68,7 @@ class VerboseLogger:
         Used for socket lifecycle events -- binding, accepting, disconnects --
         which the instructor needs to see even with verbose mode off.
         """
+        if self.quiet:
+            return
         with self._lock:
             print(f"[{self.label}] {message}", flush=True)

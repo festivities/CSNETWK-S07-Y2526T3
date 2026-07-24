@@ -118,10 +118,11 @@ class MTGNPServer:
 
     def __init__(self, host: str = "0.0.0.0", port: int = protocol.DEFAULT_PORT,
                  verbose: bool = False, pretty: bool = False,
-                 time_limit_ms: int = engine_module.DEFAULT_TIME_LIMIT_MS):
+                 time_limit_ms: int = engine_module.DEFAULT_TIME_LIMIT_MS,
+                 quiet: bool = False):
         self.host = host
         self.port = port
-        self.logger = VerboseLogger("SERVER", enabled=verbose, pretty=pretty)
+        self.logger = VerboseLogger("SERVER", enabled=verbose, pretty=pretty, quiet=quiet)
         self.engine = engine_module.GameEngine(self.logger, time_limit_ms=time_limit_ms)
         self.connections: list = []
         self._connections_lock = threading.Lock()

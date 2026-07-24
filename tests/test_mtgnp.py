@@ -107,7 +107,8 @@ class ServerTestCase(unittest.TestCase):
 
     def setUp(self):
         self.port = _allocate_port()
-        self.server = MTGNPServer(host="127.0.0.1", port=self.port, verbose=False)
+        self.server = MTGNPServer(host="127.0.0.1", port=self.port,
+                                  verbose=False, quiet=True)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.clients = []
         time.sleep(0.25)   # Let the listening socket come up.
@@ -117,6 +118,12 @@ class ServerTestCase(unittest.TestCase):
             client.close()
         if self.server._listener is not None:
             self.server._listener.close()
+        # Shut the server's sockets so its reader threads finish. They are daemon
+        # threads, so a thread still inside a print() when the interpreter exits
+        # can die holding the stdout lock, which Python reports as a fatal error
+        # after the run. Closing here lets them exit on their own instead.
+        for connection in self.server.live_connections():
+            connection.mark_closed()
 
     def connect(self) -> RawClient:
         client = RawClient(self.port)
