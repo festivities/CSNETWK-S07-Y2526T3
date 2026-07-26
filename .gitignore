@@ -5,6 +5,9 @@ __pycache__/
 .venv/
 venv/
 
+# Intermediate file left by build_readme.bat when run with --keep-html.
+README.html
+
 # Editor / OS
 .vscode/
 .idea/
