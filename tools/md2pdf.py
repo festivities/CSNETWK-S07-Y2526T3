@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Turn a Markdown file into a PDF, using the Python standard library only.
+"""Turn a Markdown file into a PDF, using only the Python standard library.
 
     python tools/md2pdf.py README.md README.pdf
 
-This exists so that README.pdf -- a required deliverable -- can be regenerated
-from README.md at any time.  It is not part of the MTGNP implementation.
+We wrote this so that we can build README.pdf, which is a required deliverable,
+from README.md at any time. It is not part of the MTGNP implementation.
 
 The conversion happens in two steps:
 
-  1. The Markdown is rendered to a single self-contained HTML file.  The renderer
-     below covers the subset of Markdown the README actually uses: headings,
-     paragraphs, lists, fenced code blocks, tables with column alignment, thematic
-     breaks, and the inline forms (code, bold, italic, links).
-  2. That HTML file is printed to PDF by a headless Chromium browser -- Microsoft
-     Edge or Google Chrome, both of which ship with a PDF printer.  Nothing is
-     installed and nothing is downloaded; we only drive a browser that is already
-     on the machine.
+  1. We render the Markdown into one HTML file that holds everything it needs.
+     The renderer below covers the part of Markdown that the README really uses,
+     which is headings, paragraphs, lists, fenced code blocks, tables with column
+     alignment, horizontal rules, and the inline forms such as code, bold, italic
+     and links.
+  2. A headless Chromium browser prints that HTML file to a PDF. This is either
+     Microsoft Edge or Google Chrome, because both of them can print to PDF. We
+     install nothing and download nothing, and we only use a browser that is
+     already on the machine.
 
-Set the MD2PDF_BROWSER environment variable to force a particular browser
-executable.  Pass --html-only to stop after step 1, which is useful when checking
+The MD2PDF_BROWSER environment variable picks one specific browser program. The
+--html-only option stops after the first step, which helps when we want to check
 the layout in a normal browser window.
 """
 
@@ -45,7 +46,7 @@ _CODE_SPAN = re.compile(r"`([^`]+)`")
 
 
 def _format_text(text: str) -> str:
-    """Apply the inline forms to a run of text that holds no code span."""
+    """Apply the inline forms to a piece of text that holds no code span."""
     out = html.escape(text, quote=False)
     out = _LINK.sub(r'<a href="\2">\1</a>', out)
     out = _BOLD.sub(r"<strong>\1</strong>", out)
@@ -54,12 +55,13 @@ def _format_text(text: str) -> str:
 
 
 def inline(text: str) -> str:
-    """Render inline Markdown.
+    """Render the inline Markdown of one line.
 
-    Code spans are taken out first and escaped verbatim, so that a `*` inside
-    `code` is never mistaken for emphasis.  Each one leaves a NUL-delimited marker
-    behind, which keeps the rest of the line in one piece -- bold that opens
-    before a code span and closes after it still has to be seen as one run.
+    We take the code spans out first and escape them as they are, so that a `*`
+    inside `code` never turns into emphasis. Each span leaves a marker behind
+    between two NUL characters. This keeps the rest of the line in one piece,
+    because bold text that opens before a code span and closes after it still has
+    to count as one run.
     """
     spans: list[str] = []
 
@@ -85,7 +87,7 @@ _TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
 
 
 def _starts_block(line: str) -> bool:
-    """True when a line begins a block, so it cannot be a lazy continuation."""
+    """True when a line starts a block, so it cannot continue the line above it."""
     return bool(
         not line.strip()
         or _HEADING.match(line)
@@ -97,7 +99,7 @@ def _starts_block(line: str) -> bool:
 
 
 def _split_row(line: str) -> list[str]:
-    """Split one table row into its cells, dropping the outer pipes."""
+    """Split one table row into its cells, and drop the pipes on the outside."""
     stripped = line.strip()
     if stripped.startswith("|"):
         stripped = stripped[1:]
@@ -120,13 +122,13 @@ def _alignments(rule: str) -> list[str]:
 
 
 def _render_list(items: list[tuple[int, str, str]], index: int) -> tuple[str, int]:
-    """Render items[index:] as one list, recursing for any deeper indent."""
+    """Render items[index:] as one list, and call this again for a deeper indent."""
     indent, tag, _ = items[index]
     parts = [f"<{tag}>"]
     while index < len(items) and items[index][0] >= indent:
         parts.append("<li>" + inline(items[index][2]))
         index += 1
-        # Anything indented further belongs inside the item we just opened.
+        # A line with a deeper indent belongs inside the item we just opened.
         while index < len(items) and items[index][0] > indent:
             nested, index = _render_list(items, index)
             parts.append(nested)
@@ -136,7 +138,7 @@ def _render_list(items: list[tuple[int, str, str]], index: int) -> tuple[str, in
 
 
 def render_markdown(text: str) -> str:
-    """Render a Markdown document to an HTML fragment."""
+    """Render a whole Markdown document into a piece of HTML."""
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     out: list[str] = []
     i = 0
@@ -156,12 +158,13 @@ def render_markdown(text: str) -> str:
             while i < len(lines) and not _FENCE.match(lines[i]):
                 body.append(lines[i])
                 i += 1
-            i += 1  # skip the closing fence
+            i += 1  # We skip the fence that closes the block.
             css = f' class="lang-{html.escape(language, quote=True)}"' if language else ""
             out.append(f"<pre{css}><code>" + html.escape("\n".join(body), quote=False) + "</code></pre>")
             continue
 
-        # A table is a header row whose next line is the alignment rule.
+        # A table starts with a header row, and the line after it is the
+        # alignment rule.
         if "|" in line and i + 1 < len(lines) and _TABLE_RULE.match(lines[i + 1]):
             headers = _split_row(line)
             aligns = _alignments(lines[i + 1])
@@ -207,7 +210,7 @@ def render_markdown(text: str) -> str:
                     tag = "ol" if item.group(2)[0].isdigit() else "ul"
                     items.append((depth, tag, item.group(3)))
                 elif items and not _starts_block(lines[i]):
-                    # A wrapped line continues the item above it.
+                    # A line that wrapped continues the item above it.
                     depth, tag, body = items[-1]
                     items[-1] = (depth, tag, body + " " + lines[i].strip())
                 else:
@@ -217,7 +220,8 @@ def render_markdown(text: str) -> str:
             out.append(rendered)
             continue
 
-        # Anything left is a paragraph: gather until a blank line or a new block.
+        # Everything left is a paragraph, so we collect lines until a blank line
+        # or the start of a new block.
         body = [line.strip()]
         i += 1
         while i < len(lines) and lines[i].strip() and not _starts_block(lines[i]):
@@ -293,7 +297,7 @@ def build_html(markdown_text: str, title: str) -> str:
 # --------------------------------------------------------------------------- #
 
 def find_browser() -> str | None:
-    """Locate a Chromium-based browser that can print to PDF."""
+    """Find a browser based on Chromium that can print to PDF."""
     forced = os.environ.get("MD2PDF_BROWSER")
     if forced:
         return forced if Path(forced).exists() or shutil.which(forced) else None
@@ -315,7 +319,7 @@ def find_browser() -> str | None:
                 if candidate.exists():
                     return str(candidate)
 
-    # macOS and Linux, plus anything already on PATH.
+    # These are the places on macOS and Linux, and then anything on the PATH.
     for candidate in (
         "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -330,12 +334,13 @@ def find_browser() -> str | None:
 
 
 def print_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
-    """Drive the browser in headless mode to print the HTML file."""
+    """Run the browser without a window so that it prints the HTML file."""
     if pdf_path.exists():
         pdf_path.unlink()
 
-    # A throwaway profile keeps this from clashing with a browser the user already
-    # has open, which would otherwise make the headless run exit immediately.
+    # We give the browser a temporary profile. Without it, a browser that the
+    # user already has open would clash with this one, and the headless run would
+    # stop right away.
     with tempfile.TemporaryDirectory(prefix="md2pdf-") as profile:
         command = [
             browser,
@@ -343,8 +348,9 @@ def print_to_pdf(browser: str, html_path: Path, pdf_path: Path) -> None:
             "--disable-gpu",
             "--disable-extensions",
             f"--user-data-dir={profile}",
-            "--no-pdf-header-footer",   # current flag name
-            "--print-to-pdf-no-header",  # older builds; unknown switches are ignored
+            "--no-pdf-header-footer",   # This is the name of the flag today.
+            "--print-to-pdf-no-header",  # Older builds use this one, and a browser
+                                         # ignores a switch that it does not know.
             "--virtual-time-budget=5000",
             f"--print-to-pdf={pdf_path}",
             html_path.as_uri(),
@@ -364,11 +370,11 @@ def main(argv=None) -> int:
     parser.add_argument("source", nargs="?", default="README.md",
                         help="the Markdown file to convert (default: README.md)")
     parser.add_argument("output", nargs="?", default=None,
-                        help="the PDF to write (default: the source with a .pdf suffix)")
+                        help="the PDF to write (default: the source name with .pdf)")
     parser.add_argument("--html-only", action="store_true",
-                        help="write the intermediate HTML next to the output and stop")
+                        help="write the HTML next to the output and stop there")
     parser.add_argument("--keep-html", action="store_true",
-                        help="also keep the intermediate HTML file")
+                        help="keep the HTML file as well as the PDF")
     args = parser.parse_args(argv)
 
     source = Path(args.source).resolve()
@@ -389,9 +395,9 @@ def main(argv=None) -> int:
 
     browser = find_browser()
     if browser is None:
-        print("md2pdf: no Chromium-based browser was found.\n"
+        print("md2pdf: we could not find a browser based on Chromium.\n"
               "        Install Microsoft Edge or Google Chrome, or set MD2PDF_BROWSER\n"
-              f"        to the path of one.  The HTML is at {html_path}.",
+              f"        to the path of one. The HTML is at {html_path}.",
               file=sys.stderr)
         return 2
 

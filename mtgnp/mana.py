@@ -1,43 +1,42 @@
 """
-Mana payment: validating a declared payment and tapping the sources that fund it.
+Mana payment: checking a declared payment and tapping the sources that pay for it.
 
-MTGNP 1.0 handles mana production implicitly (RFC Section 7.5).  Activating a
-mana ability does not use the stack and has no PDU of its own.  Instead the
-client declares the full `mana_payment` inside CAST_SPELL or ACTIVATE_ABILITY,
-and the server deducts the corresponding mana sources in a single atomic step.
-If the declared payment cannot be satisfied, the server answers with ERROR code
-INSUFFICIENT_MANA.
+MTGNP 1.0 handles mana production in the background (RFC Section 7.5). A mana
+ability does not use the stack and does not have a PDU of its own. The client
+declares the whole `mana_payment` inside CAST_SPELL or ACTIVATE_ABILITY instead,
+and the server taps the matching mana sources in one step. If the server cannot
+pay the declared payment, it answers with the ERROR code INSUFFICIENT_MANA.
 
 Payment format (RFC Section 10.2.7)
 -----------------------------------
-Colored mana uses the color as the key; generic mana uses the key "X":
+Colored mana uses the color as the key, and generic mana uses the key "X":
 
-    { "R": 1 }            Lightning Bolt   -- one red
-    { "R": 1, "X": 1 }    Searing Spear    -- one red plus one generic
-    { "X": 1 }            Sol Ring         -- one generic
+    { "R": 1 }            Lightning Bolt, which needs one red
+    { "R": 1, "X": 1 }    Searing Spear, which needs one red and one generic
+    { "X": 1 }            Sol Ring, which needs one generic
 
-We also accept "generic" as a synonym for "X", and "C" as an explicit
-colorless requirement, so that a slightly different client still interoperates.
+We also accept "generic" as another name for "X", and "C" as a colorless
+requirement, so that a client written a little differently still works with us.
 """
 
 from collections import Counter
 
 from . import cards
 
-# Keys that name a specific kind of mana that must be matched exactly.
+# Keys that name one kind of mana, which the payment has to match exactly.
 SPECIFIC_MANA_KEYS = ("W", "U", "B", "R", "G", "C")
 # Keys that mean "this much mana of any kind".
 GENERIC_KEYS = ("X", "generic")
 
 
 class InsufficientMana(Exception):
-    """The declared payment does not match the cost, or cannot be produced."""
+    """The declared payment does not match the cost, or the player cannot pay it."""
 
 
 def cost_as_payment_from_cost(cost: dict) -> dict:
     """Turn a cost dictionary into the `mana_payment` that pays it exactly.
 
-    Generic mana is reported under the key "X", as the RFC specifies.
+    We report generic mana under the key "X", the way the RFC asks for it.
     """
     payment = {symbol: amount for symbol, amount in (cost or {}).items()
                if symbol != cards.GENERIC}
@@ -48,22 +47,22 @@ def cost_as_payment_from_cost(cost: dict) -> dict:
 
 
 def cost_as_payment(card: cards.Card) -> dict:
-    """The canonical `mana_payment` for a card's printed cost.
+    """The standard `mana_payment` for the printed cost of a card.
 
-    The client uses this to fill in CAST_SPELL automatically, so a human never
-    has to hand-compute a payment.
+    The client uses this to fill in CAST_SPELL on its own, so the player never
+    has to work out a payment by hand.
     """
     return cost_as_payment_from_cost(card.cost)
 
 
 def format_cost(cost: dict) -> str:
-    """Render a cost the way it is printed on a card, e.g. {1}{R} or {U}{U}."""
+    """Show a cost the way a card prints it, for example {1}{R} or {U}{U}."""
     specific = Counter({s: n for s, n in (cost or {}).items() if s != cards.GENERIC})
     return _describe(specific, (cost or {}).get(cards.GENERIC, 0))
 
 
 def normalise(payment: dict | None) -> tuple[Counter, int]:
-    """Split a declared payment into (specific mana counts, generic amount)."""
+    """Split a declared payment into the specific mana counts and the generic amount."""
     payment = payment or {}
     specific = Counter()
     generic = 0
@@ -84,9 +83,9 @@ def normalise(payment: dict | None) -> tuple[Counter, int]:
 
 
 def check_matches_cost(payment: dict | None, cost: dict) -> None:
-    """Verify the declared payment is exactly the cost that must be paid.
+    """Check that the declared payment is exactly the cost the player has to pay.
 
-    Raises InsufficientMana with an explanatory message if it is not.
+    If it is not, this raises InsufficientMana with a message that explains why.
     """
     declared_specific, declared_generic = normalise(payment)
     required_specific = Counter({c: n for c, n in cost.items() if c != cards.GENERIC})
@@ -100,20 +99,21 @@ def check_matches_cost(payment: dict | None, cost: dict) -> None:
 
 
 def pay(player, payment: dict | None) -> list:
-    """Tap enough of `player`'s mana sources to fund `payment`.
+    """Tap enough mana sources of `player` to pay for `payment`.
 
-    Returns the permanents that were tapped.  Nothing is mutated unless the whole
-    payment can be funded, which keeps the deduction atomic as the RFC requires.
-    Raises InsufficientMana otherwise.
+    This returns the permanents that we tapped. We do not change anything until
+    we know that the player can pay the whole payment, so the payment happens in
+    one step the way the RFC asks for. If the player cannot pay, this raises
+    InsufficientMana and nothing is tapped.
     """
     specific, generic = normalise(payment)
     sources = _available_sources(player)
 
-    pool = Counter()       # Mana produced so far but not yet spent.
-    to_tap = []            # Sources we have decided to tap.
+    pool = Counter()       # Mana we produced so far but have not spent yet.
+    to_tap = []            # The sources we decided to tap.
 
     def tap_a_source_producing(symbol: str | None) -> bool:
-        """Tap an untapped source that makes `symbol` (or any, if None)."""
+        """Tap an untapped source that makes `symbol`, or any source if None."""
         for source in sources:
             if source in to_tap:
                 continue
@@ -124,17 +124,17 @@ def pay(player, payment: dict | None) -> list:
                 return True
         return False
 
-    # Pay the specific (colored or colorless) requirements first: they are the
-    # constrained ones, so satisfying them before generic avoids wasting a
-    # source that was the only producer of a needed color.
+    # We pay the specific colored and colorless requirements first, because they
+    # are the harder ones. If we paid the generic part first, we could waste the
+    # only source that produces a color we still need.
     for symbol in SPECIFIC_MANA_KEYS:
         for _ in range(specific.get(symbol, 0)):
             if pool[symbol] == 0 and not tap_a_source_producing(symbol):
                 raise InsufficientMana(f"No untapped source can produce {{{symbol}}}")
             pool[symbol] -= 1
 
-    # Generic mana can be paid with anything, including mana already in the pool
-    # (for example the second {C} from a Sol Ring).
+    # The player can pay generic mana with anything, including mana that is
+    # already in the pool, such as the second {C} from a Sol Ring.
     for _ in range(generic):
         spare = next((symbol for symbol, count in pool.items() if count > 0), None)
         if spare is None:
@@ -143,14 +143,14 @@ def pay(player, payment: dict | None) -> list:
             spare = next(symbol for symbol, count in pool.items() if count > 0)
         pool[spare] -= 1
 
-    # Every requirement is funded, so commit: tap the sources we selected.
+    # We can now pay every requirement, so we tap the sources that we chose.
     for source in to_tap:
         source.tapped = True
     return to_tap
 
 
 def available_mana(player) -> Counter:
-    """All mana `player` could produce right now (for client-side display)."""
+    """All the mana that `player` could make right now, which the client displays."""
     total = Counter()
     for source in _available_sources(player):
         total.update(cards.MANA_SOURCES[cards.base_of(source.card_id)])
@@ -158,11 +158,12 @@ def available_mana(player) -> Counter:
 
 
 def _available_sources(player) -> list:
-    """Untapped permanents that can produce mana.
+    """The untapped permanents that can make mana.
 
-    A creature with summoning sickness may not activate an ability with the tap
-    symbol in its cost (RFC Section 3), which rules out Llanowar Elves and
-    Elvish Mystic on the turn they arrive.  Lands and artifacts are unaffected.
+    A creature with summoning sickness cannot activate an ability that has the
+    tap symbol in its cost (RFC Section 3). This means that Llanowar Elves and
+    Elvish Mystic cannot make mana on the turn they enter play. Lands and
+    artifacts do not have this problem.
     """
     usable = []
     for permanent in player.battlefield:

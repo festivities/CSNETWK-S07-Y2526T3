@@ -3,24 +3,25 @@ The Combat Phase sub-state machine (RFC Section 9).
 
     BEGIN_COMBAT
         |
-    DECLARE_ATTACKERS     <-- AP declares; priority window follows
+    DECLARE_ATTACKERS     <-- the AP declares, then a priority window follows
         |
-    DECLARE_BLOCKERS      <-- NAP assigns blockers; priority window follows
+    DECLARE_BLOCKERS      <-- the NAP blocks, then a priority window follows
         |
-    ASSIGN_DAMAGE_ORDER   <-- only if an attacker is blocked by two or more
+    ASSIGN_DAMAGE_ORDER   <-- only when two or more creatures block one attacker
         |
-   [FIRST_STRIKE_DAMAGE]  <-- only if first strike or double strike is present
+   [FIRST_STRIKE_DAMAGE]  <-- only when first strike or double strike is in combat
         |
-    COMBAT_DAMAGE         <-- server resolves damage
+    COMBAT_DAMAGE         <-- the server deals the damage
         |
-    END_OF_COMBAT         <-- priority window; combat state is cleared
+    END_OF_COMBAT         <-- a priority window, then we clear the combat state
 
-The declaration steps have no request PDU of their own: the PHASE_TRANSITION that
-announces the step implicitly asks the relevant player to declare, and the client
-echoes that transition's seq_num in its reply (RFC Sections 5.4, 9.3, 9.4).
+The declaration steps do not have a request PDU of their own. The
+PHASE_TRANSITION that announces the step is what asks the player to declare, and
+the client echoes the seq_num of that transition in its reply (RFC Sections 5.4,
+9.3 and 9.4).
 
-MTGNP 1.0 does not implement trample: a blocked attacker deals its damage to its
-blockers only, never to the defending player (RFC Section 9.7).
+MTGNP 1.0 does not have trample. A blocked attacker deals its damage only to its
+blockers, and never to the defending player (RFC Section 9.7).
 """
 
 from . import cards, effects, protocol
@@ -40,7 +41,7 @@ def run_combat_phase(engine) -> None:
     declare_attackers(engine, request_seq)
 
     if not state.attackers:
-        # With no attackers the server skips straight to End of Combat.
+        # When nobody attacks, the server goes straight to End of Combat.
         transition(engine, protocol.END_OF_COMBAT)
         run_priority_window(engine)
         state.clear_combat()
@@ -57,7 +58,7 @@ def run_combat_phase(engine) -> None:
     run_priority_window(engine)
 
     # --- Assign Damage Order Step (RFC Section 9.5) ---
-    # Only entered when at least one attacker is blocked by two or more creatures.
+    # We only enter this step when two or more creatures block one attacker.
     multiply_blocked = [a for a, blockers in state.blocks.items() if len(blockers) >= 2]
     if multiply_blocked:
         request_seq = transition(engine, protocol.ASSIGN_DAMAGE_ORDER_STEP)
@@ -65,7 +66,8 @@ def run_combat_phase(engine) -> None:
         run_priority_window(engine)
 
     # --- First Strike Damage Step (RFC Section 9.6) ---
-    # Only entered if some creature in combat has first or double strike.
+    # We only enter this step when a creature in combat has first strike or
+    # double strike.
     if _anyone_has_first_strike(engine):
         transition(engine, protocol.FIRST_STRIKE_DAMAGE)
         deal_combat_damage(engine, first_strike_step=True)
@@ -82,10 +84,10 @@ def run_combat_phase(engine) -> None:
 
 
 def transition(engine, to_phase: str) -> int:
-    """Broadcast PHASE_TRANSITION and return its seq_num.
+    """Send PHASE_TRANSITION to both players and return its seq_num.
 
-    For the declaration steps that seq_num is also the token the acting client
-    must echo, which is why this returns it.
+    In the declaration steps, that seq_num is also the token that the acting
+    client has to echo back, and this is why we return it.
     """
     state = engine.state
     from_phase = state.phase
@@ -102,7 +104,7 @@ def transition(engine, to_phase: str) -> int:
 # --- Declaring attackers (RFC Sections 9.3, 10.2.15) --------------------
 
 def declare_attackers(engine, request_seq: int) -> None:
-    """Wait for the Active Player's DECLARE_ATTACKERS and apply it."""
+    """Wait for the DECLARE_ATTACKERS of the Active Player and apply it."""
     state = engine.state
     attacker_player = state.active_player
     defender = state.non_active_player
@@ -121,19 +123,20 @@ def declare_attackers(engine, request_seq: int) -> None:
             engine.send_error(attacker_player, protocol.ILLEGAL_ACTION, problem, pdu)
             continue
 
-        # The declaration is legal: record it and tap the attackers.
+        # The declaration is legal, so we record it and tap the attackers.
         for declaration in declarations:
             creature_id = declaration["creature_id"]
             state.attackers[creature_id] = declaration.get("target", defender)
             creature = state.find_permanent(creature_id)
-            # Declaring an attacker taps it immediately, unless it has vigilance.
+            # An attacker taps as soon as the player declares it, unless the
+            # creature has vigilance.
             if not creature.has(cards.VIGILANCE):
                 creature.tapped = True
         return
 
 
 def _check_attackers(engine, attacker_player: str, defender: str, declarations: list) -> str | None:
-    """Return a human-readable problem with the declaration, or None if legal."""
+    """Return a message that explains what is wrong with the declaration, or None if it is legal."""
     state = engine.state
     seen = set()
 
@@ -151,7 +154,7 @@ def _check_attackers(engine, attacker_player: str, defender: str, declarations: 
             return f"You do not control a creature named {creature_id}."
         if creature.tapped:
             return f"{cards.name_of(creature_id)} is tapped and cannot attack."
-        # Summoning sickness stops an attack unless the creature has haste.
+        # Summoning sickness stops an attack, unless the creature has haste.
         if creature.summoning_sick and not creature.has(cards.HASTE):
             return f"{cards.name_of(creature_id)} has summoning sickness and cannot attack."
         if creature.has(cards.DEFENDER):
@@ -165,7 +168,7 @@ def _check_attackers(engine, attacker_player: str, defender: str, declarations: 
 
 
 def _fire_attack_triggers(engine) -> None:
-    """Queue "whenever this creature attacks" triggers (RFC Section 8.6)."""
+    """Queue the "whenever this creature attacks" triggers (RFC Section 8.6)."""
     state = engine.state
     pending = []
     for attacker_id, defending_player in state.attackers.items():
@@ -179,7 +182,7 @@ def _fire_attack_triggers(engine) -> None:
 # --- Declaring blockers (RFC Sections 9.4, 10.2.16) --------------------
 
 def declare_blockers(engine, request_seq: int) -> None:
-    """Wait for the Non-Active Player's DECLARE_BLOCKERS and apply it."""
+    """Wait for the DECLARE_BLOCKERS of the Non-Active Player and apply it."""
     state = engine.state
     blocking_player = state.non_active_player
 
@@ -197,7 +200,7 @@ def declare_blockers(engine, request_seq: int) -> None:
             engine.send_error(blocking_player, protocol.ILLEGAL_ACTION, problem, pdu)
             continue
 
-        # Blocking does not tap the blocking creatures (RFC Section 9.4).
+        # A creature that blocks does not tap (RFC Section 9.4).
         state.blocks.clear()
         for declaration in declarations:
             attacker_id = declaration["blocking_id"]
@@ -206,7 +209,7 @@ def declare_blockers(engine, request_seq: int) -> None:
 
 
 def _check_blockers(engine, blocking_player: str, declarations: list) -> str | None:
-    """Return a problem with the block assignment, or None if it is legal."""
+    """Return a message about what is wrong with the blocks, or None if they are legal."""
     state = engine.state
     already_blocking = set()
 
@@ -218,7 +221,7 @@ def _check_blockers(engine, blocking_player: str, declarations: list) -> str | N
         blocker_id = declaration["creature_id"]
         attacker_id = declaration["blocking_id"]
 
-        # A single creature may block only one attacker (RFC Section 9.4).
+        # One creature can only block one attacker (RFC Section 9.4).
         if blocker_id in already_blocking:
             return f"{cards.name_of(blocker_id)} cannot block more than one attacker."
         already_blocking.add(blocker_id)
@@ -233,7 +236,7 @@ def _check_blockers(engine, blocking_player: str, declarations: list) -> str | N
             return f"{attacker_id} is not attacking."
 
         attacker = state.find_permanent(attacker_id)
-        # A creature with flying can only be blocked by another flyer.
+        # Only a creature with flying can block a creature with flying.
         if attacker.has(cards.FLYING) and not blocker.has(cards.FLYING):
             return (f"{cards.name_of(attacker_id)} has flying and cannot be blocked "
                     f"by {cards.name_of(blocker_id)}.")
@@ -244,7 +247,7 @@ def _check_blockers(engine, blocking_player: str, declarations: list) -> str | N
 # --- Assigning damage order (RFC Sections 9.5, 10.2.17) ---------------
 
 def assign_damage_orders(engine, multiply_blocked: list, request_seq: int) -> None:
-    """Collect one ASSIGN_DAMAGE_ORDER per attacker blocked by two or more creatures."""
+    """Collect one ASSIGN_DAMAGE_ORDER for each attacker that two or more creatures block."""
     state = engine.state
     outstanding = set(multiply_blocked)
 
@@ -272,11 +275,12 @@ def assign_damage_orders(engine, multiply_blocked: list, request_seq: int) -> No
 # --- Dealing combat damage (RFC Sections 9.6, 9.7, 10.2.18) ----------
 
 def deal_combat_damage(engine, first_strike_step: bool) -> None:
-    """Assign and apply all combat damage for one damage step, simultaneously.
+    """Work out and apply all the combat damage of one damage step at the same time.
 
-    `first_strike_step` selects which creatures deal damage now: creatures with
-    first strike or double strike in the First Strike Damage Step, and everyone
-    else -- plus double strikers again -- in the regular Combat Damage Step.
+    `first_strike_step` chooses which creatures deal damage now. In the First
+    Strike Damage Step, the creatures with first strike or double strike deal
+    damage. In the normal Combat Damage Step, every other creature deals damage,
+    and the creatures with double strike deal damage a second time.
     """
     state = engine.state
     events = []
@@ -284,35 +288,35 @@ def deal_combat_damage(engine, first_strike_step: bool) -> None:
     for attacker_id, defending_player in state.attackers.items():
         attacker = state.find_permanent(attacker_id)
         if attacker is None:
-            continue  # It was destroyed or removed before damage.
+            continue  # Something destroyed or removed it before the damage.
 
         blockers = [
             blocker_id for blocker_id in state.blocks.get(attacker_id, [])
             if state.find_permanent(blocker_id) is not None
         ]
 
-        # Attacker's damage.
+        # The damage of the attacker.
         if _deals_damage_now(attacker, first_strike_step):
             if not blockers:
-                # Unblocked: damage goes straight to the defending player.
+                # Nobody blocked it, so the damage goes to the defending player.
                 events.append({"source": attacker_id, "target": defending_player,
                                "amount": attacker.power})
             else:
                 events.extend(_assign_to_blockers(state, attacker, attacker_id, blockers))
 
-        # Each blocker deals its power back to the attacker it is blocking.
+        # Every blocker deals damage equal to its power back to the attacker.
         for blocker_id in blockers:
             blocker = state.find_permanent(blocker_id)
             if _deals_damage_now(blocker, first_strike_step) and blocker.power > 0:
                 events.append({"source": blocker_id, "target": attacker_id,
                                "amount": blocker.power})
 
-    # All combat damage is dealt simultaneously, so compute every event before
-    # applying any of it.
+    # All the combat damage happens at the same time, so we work out every event
+    # first and only then apply them.
     for event in events:
         effects.deal_damage(state, event["target"], event["amount"])
 
-    # Creatures with lethal damage die; a player at zero life loses.
+    # A creature with enough damage dies, and a player at zero life loses.
     died = engine.check_state_based_actions()
 
     engine.broadcast({
@@ -325,11 +329,11 @@ def deal_combat_damage(engine, first_strike_step: bool) -> None:
 
 
 def _assign_to_blockers(state, attacker, attacker_id: str, blockers: list) -> list:
-    """Split an attacker's power among its blockers, in the chosen order.
+    """Split the power of an attacker among its blockers, in the chosen order.
 
-    Each blocker in order is assigned enough damage to be lethal before the next
-    one receives any; whatever is left over is assigned to the final blocker.
-    With no trample in MTGNP 1.0, excess damage is simply lost.
+    We give each blocker in the order enough damage to kill it before the next
+    blocker gets any, and the last blocker gets everything that is left. MTGNP
+    1.0 has no trample, so any extra damage is simply lost.
     """
     order = [b for b in state.damage_order.get(attacker_id, blockers) if b in blockers]
     events = []
@@ -349,7 +353,7 @@ def _assign_to_blockers(state, attacker, attacker_id: str, blockers: list) -> li
 
 
 def _deals_damage_now(creature, first_strike_step: bool) -> bool:
-    """Does this creature deal its combat damage in the current damage step?"""
+    """Does this creature deal its combat damage in the damage step we are in?"""
     has_first = creature.has(cards.FIRST_STRIKE)
     has_double = creature.has(cards.DOUBLE_STRIKE)
     if first_strike_step:
@@ -358,7 +362,7 @@ def _deals_damage_now(creature, first_strike_step: bool) -> bool:
 
 
 def _anyone_has_first_strike(engine) -> bool:
-    """Is a First Strike Damage Step needed at all (RFC Section 9.6)?"""
+    """Do we need a First Strike Damage Step at all (RFC Section 9.6)?"""
     state = engine.state
     in_combat = list(state.attackers) + [b for blockers in state.blocks.values() for b in blockers]
     for permanent_id in in_combat:

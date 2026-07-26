@@ -1,18 +1,19 @@
 """
 Protocol conformance tests for MTGNP 1.0.
 
-These run the real server over real TCP sockets and talk to it with a deliberately
-"dumb" test client that sends hand-written PDUs, so framing, sequence-number
-tokens and error codes are exercised exactly as a third-party client would
-exercise them.
+These tests run the real server over real TCP sockets. They talk to it with a
+simple test client that only sends the PDUs we write by hand, so the framing, the
+sequence number tokens and the error codes get tested the same way a client from
+another group would test them.
 
-Only the standard library is used -- no third-party test runner needed:
+We only use the standard library, so there is no test runner to install:
 
     python -m unittest discover -s tests -v
 
-Tests avoid depending on the shuffle by using decks made up only of the cards a
-test needs: with an eight-card deck every possible seven-card opening hand
-contains at least three of each card, so nothing is left to chance.
+The tests do not depend on the shuffle, because each one uses a deck that holds
+only the cards that the test needs. In an 8 card deck, every possible opening
+hand of 7 cards holds at least 3 copies of each card, so nothing is left to
+chance.
 """
 
 import socket
@@ -27,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from mtgnp import cards, protocol                      # noqa: E402
 from mtgnp.server import MTGNPServer                   # noqa: E402
 
-# Each test binds its own port so the tests are fully independent.
+# Every test binds its own port, so the tests do not affect each other.
 _next_port = 4600
 
 
@@ -38,28 +39,29 @@ def _allocate_port() -> int:
 
 
 def instances(base: str, count: int, start: int = 1) -> list:
-    """["mountain_001", ...] -- `count` instances of one card, from `start`.
+    """Build `count` instances of one card, starting at the copy number `start`.
 
-    `start` lets the two players draw different copies of the same card, since
-    both decks come from one shared fixed set and may not overlap.
+    For example, this returns ["mountain_001", "mountain_002"] and so on. The
+    `start` value lets the two players use different copies of the same card,
+    because both decks come from one shared fixed set and must not overlap.
     """
     return [f"{base}_{i:03d}" for i in range(start, start + count)]
 
 
 class RawClient:
-    """A minimal MTGNP client that sends exactly the PDUs a test tells it to."""
+    """A very small MTGNP client that only sends the PDUs a test gives it."""
 
     def __init__(self, port: int):
         self.socket = socket.create_connection(("127.0.0.1", port), timeout=5)
-        # The most recent in-game GAME_STATE_UPDATE, so tests can read the hand
-        # and battlefield the server last reported.
+        # The newest GAME_STATE_UPDATE from a running game, so that a test can
+        # read the hand and the battlefield that the server reported last.
         self.last_state: dict = {}
 
     def send(self, pdu: dict) -> None:
         protocol.send_pdu(self.socket, pdu)
 
     def send_raw(self, payload: bytes) -> None:
-        """Send a hand-built frame, for testing malformed payloads."""
+        """Send a frame that we built by hand, so we can test broken payloads."""
         self.socket.sendall(len(payload).to_bytes(4, "big") + payload)
 
     def recv(self) -> dict:
@@ -71,7 +73,7 @@ class RawClient:
         return pdu
 
     def recv_until(self, pdu_type: str, where=None, limit: int = 400) -> dict:
-        """Read until a PDU of `pdu_type` (optionally matching `where`) arrives."""
+        """Keep reading until a PDU of `pdu_type` arrives, and match `where` if we got one."""
         for _ in range(limit):
             pdu = self.recv()
             if pdu.get("type") == pdu_type and (where is None or where(pdu)):
@@ -79,7 +81,7 @@ class RawClient:
         raise AssertionError(f"never received {pdu_type}")
 
     def hand(self, player_id: str) -> list:
-        """Our hand, accepting either the object or array shape for `hand`."""
+        """Our hand. We accept both the object shape and the array shape of `hand`."""
         hand = self.last_state.get("hand")
         if isinstance(hand, dict):
             return hand.get(player_id) or []
@@ -93,15 +95,16 @@ class RawClient:
 
 
 class ServerTestCase(unittest.TestCase):
-    """Base class that boots a fresh server for each test."""
+    """The base class that starts a new server for every test."""
 
-    # Default decks: deliberately symmetric, so it does not matter which player
-    # wins the coin flip -- whoever is active holds the same kinds of card.
+    # The default decks. We made them symmetric on purpose, so it does not matter
+    # which player wins the coin flip. Whoever is active holds the same kinds of
+    # card either way.
     #
-    # Each is eight cards, and the opening hand is seven, so exactly one card is
-    # left in the library.  That makes hand contents predictable without relying
-    # on the shuffle: with two Lightning Bolts in an eight-card deck, at least one
-    # of them is always in the opening hand, and at least five Mountains are too.
+    # Each deck holds 8 cards, and an opening hand holds 7, so exactly one card
+    # stays in the library. This makes the contents of a hand predictable without
+    # any help from the shuffle. With two Lightning Bolts in an 8 card deck, the
+    # opening hand always holds at least one of them, and at least 5 Mountains.
     DECK_ONE = instances("mountain", 6) + instances("lightning_bolt", 2)
     DECK_TWO = instances("mountain", 6, start=7) + instances("lightning_bolt", 2, start=3)
 
@@ -111,17 +114,18 @@ class ServerTestCase(unittest.TestCase):
                                   verbose=False, quiet=True)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.clients = []
-        time.sleep(0.25)   # Let the listening socket come up.
+        time.sleep(0.25)   # We give the listening socket time to come up.
 
     def tearDown(self):
         for client in self.clients:
             client.close()
         if self.server._listener is not None:
             self.server._listener.close()
-        # Shut the server's sockets so its reader threads finish. They are daemon
-        # threads, so a thread still inside a print() when the interpreter exits
-        # can die holding the stdout lock, which Python reports as a fatal error
-        # after the run. Closing here lets them exit on their own instead.
+        # We close the sockets of the server so that its reader threads finish.
+        # They are daemon threads, so a thread that is still inside a print()
+        # when the interpreter exits can die while it holds the stdout lock, and
+        # Python then reports a fatal error after the run. Closing the sockets
+        # here lets those threads end on their own instead.
         for connection in self.server.live_connections():
             connection.mark_closed()
 
@@ -130,21 +134,22 @@ class ServerTestCase(unittest.TestCase):
         self.clients.append(client)
         return client
 
-    # --- Getting a game under way ----------------------------------------
+    # --- Helpers that get a game started ---------------------------------
 
     def send_ready(self, client: RawClient, player_id: str, deck: list) -> None:
         client.send({"type": "PLAYER_READY", "seq_num": 1,
                      "player_id": player_id, "deck_list": deck})
 
     def start_game(self, deck_one=None, deck_two=None):
-        """Bring two clients to the first priority window of turn 1.
+        """Bring two clients up to the first priority window of turn 1.
 
-        Returns (clients_by_id, active_player_id, first_priority_grant).
+        This returns (clients_by_id, active_player_id, first_priority_grant).
         """
         one, two = self.connect(), self.connect()
 
-        # Send the two PLAYER_READY PDUs one at a time so their arrival order is
-        # deterministic; otherwise which deck is shuffled first is a race.
+        # We send the two PLAYER_READY PDUs one after the other, so they always
+        # arrive in the same order. If we sent them together, the order in which
+        # the decks get shuffled would be a race.
         self.send_ready(one, "player_1", deck_one or self.DECK_ONE)
         one.recv_until(protocol.GAME_STATE_UPDATE)
         self.send_ready(two, "player_2", deck_two or self.DECK_TWO)
@@ -163,10 +168,10 @@ class ServerTestCase(unittest.TestCase):
                                lambda p: p.get("to_phase") == protocol.UNTAP)
         active = untap["active_player"]
 
-        # The Upkeep Step's grant is now outstanding: the server is blocked
-        # waiting for this player to act on it.  Remember it so take_grant can
-        # hand it to the first caller instead of waiting for a second grant that
-        # would never come.
+        # The grant of the Upkeep Step is now open, and the server is waiting for
+        # this player to answer it. We remember it here so that take_grant can
+        # give it to the first caller. Without this, a test would wait for a
+        # second grant that never arrives.
         grant = clients[active].recv_until(protocol.PRIORITY_GRANT)
         self.pending_grant = (active, grant)
         return clients, active, grant
@@ -175,10 +180,11 @@ class ServerTestCase(unittest.TestCase):
         return "player_2" if player_id == "player_1" else "player_1"
 
     def take_grant(self, clients, player_id: str) -> dict:
-        """The PRIORITY_GRANT this player must answer next.
+        """The PRIORITY_GRANT that this player has to answer next.
 
-        Returns an already-received but unanswered grant if there is one, so a
-        test never waits for a grant the server has in fact already sent.
+        When we already received a grant but have not answered it yet, this
+        returns that one. This way a test never waits for a grant that the server
+        has in fact already sent.
         """
         pending = getattr(self, "pending_grant", None)
         if pending is not None and pending[0] == player_id:
@@ -191,9 +197,9 @@ class ServerTestCase(unittest.TestCase):
         clients[player_id].send({"type": "PRIORITY_PASS", "seq_num": grant["seq_num"]})
 
     def pass_until(self, clients, active, target_phase):
-        """Both players pass priority until `target_phase` begins.
+        """Both players pass priority until `target_phase` starts.
 
-        Returns the PHASE_TRANSITION that announced it.
+        This returns the PHASE_TRANSITION that announced that phase.
         """
         inactive = self.other(active)
         for _ in range(60):
@@ -205,7 +211,7 @@ class ServerTestCase(unittest.TestCase):
         raise AssertionError(f"never reached {target_phase}")
 
     def play_a_land(self, clients, active):
-        """Play the first land in hand during a Main Phase; returns the new grant."""
+        """Play the first land in the hand during a Main Phase, and return the new grant."""
         grant = self.take_grant(clients, active)
         land = next(c for c in clients[active].hand(active) if cards.lookup(c).is_land)
         clients[active].send({"type": "PLAY_LAND", "seq_num": grant["seq_num"],
@@ -218,7 +224,7 @@ class ServerTestCase(unittest.TestCase):
 class FramingTests(ServerTestCase):
 
     def test_length_prefixed_frame_round_trip(self):
-        """A PDU is framed with a 4-byte big-endian length and parses back."""
+        """We frame a PDU with a 4-byte big-endian length, and it parses back."""
         client = self.connect()
         client.send({"type": "PING", "seq_num": 7, "timestamp": 1234})
         pong = client.recv_until(protocol.PONG)
@@ -226,7 +232,7 @@ class FramingTests(ServerTestCase):
         self.assertEqual(pong["timestamp"], 1234)
 
     def test_oversized_pdu_is_refused(self):
-        """A PDU may not exceed 65,535 bytes (RFC Section 5.2)."""
+        """A PDU must not be larger than 65,535 bytes (RFC Section 5.2)."""
         sock = socket.socket()
         with self.assertRaises(protocol.PDUTooLarge):
             protocol.send_pdu(sock, {"type": "PING", "seq_num": 1,
@@ -234,24 +240,24 @@ class FramingTests(ServerTestCase):
         sock.close()
 
     def test_partial_reads_are_reassembled(self):
-        """recv_pdu must reassemble a frame delivered in several TCP segments."""
+        """recv_pdu has to put a frame back together when TCP splits it into several parts."""
         client = self.connect()
         payload = b'{"type": "PING", "seq_num": 42, "timestamp": 9}'
         client.socket.sendall(len(payload).to_bytes(4, "big"))
-        time.sleep(0.05)                       # Force a separate segment.
+        time.sleep(0.05)                       # This forces a separate segment.
         client.socket.sendall(payload[:10])
         time.sleep(0.05)
         client.socket.sendall(payload[10:])
         self.assertEqual(client.recv_until(protocol.PONG)["seq_num"], 42)
 
     def test_invalid_json_is_reported_and_connection_kept(self):
-        """A well-framed but unparseable payload yields ERROR/INVALID_JSON."""
+        """A payload with a good frame but bad JSON gives us ERROR/INVALID_JSON."""
         client = self.connect()
         client.send_raw(b"{this is not json")
         self.assertEqual(client.recv_until(protocol.ERROR)["code"],
                          protocol.INVALID_JSON)
 
-        # The connection must survive an illegal PDU, so a later PDU still works.
+        # The connection has to survive an illegal PDU, so a later PDU still works.
         client.send({"type": "PING", "seq_num": 99, "timestamp": 1})
         self.assertEqual(client.recv_until(protocol.PONG)["seq_num"], 99)
 
@@ -262,7 +268,7 @@ class FramingTests(ServerTestCase):
                          protocol.UNKNOWN_TYPE)
 
     def test_server_pdus_carry_type_and_seq_num(self):
-        """type and seq_num are REQUIRED in every PDU (RFC Section 5.4)."""
+        """Every PDU needs a type and a seq_num (RFC Section 5.4)."""
         clients, active, grant = self.start_game()
         self.assertIn("type", grant)
         self.assertIsInstance(grant["seq_num"], int)
@@ -270,12 +276,12 @@ class FramingTests(ServerTestCase):
         self.assertIn("time_limit_ms", grant)
 
 
-# --- TCP server behaviour (RFC Section 5.1) -----------------------------
+# --- How the TCP server behaves (RFC Section 5.1) -----------------------
 
 class ConnectionTests(ServerTestCase):
 
     def test_third_connection_is_refused(self):
-        """Only two players may be seated; further attempts are refused."""
+        """A game takes only two players, and the server refuses everyone else."""
         self.connect()
         self.connect()
         third = self.connect()
@@ -284,7 +290,7 @@ class ConnectionTests(ServerTestCase):
             third.recv()
 
     def test_slot_frees_up_after_disconnect(self):
-        """A disconnect releases a player slot for a replacement connection."""
+        """A disconnect frees a player slot, so another client can take it."""
         first, _second = self.connect(), self.connect()
         first.close()
         time.sleep(0.3)
@@ -317,7 +323,7 @@ class LobbyTests(ServerTestCase):
         self.expect_deck_error(["black_lotus_001", "mountain_001"])
 
     def test_copy_number_beyond_the_fixed_set_is_illegal(self):
-        """Only four copies of Lightning Bolt exist, so _005 is not a real card."""
+        """The fixed set has only 4 copies of Lightning Bolt, so _005 is not a real card."""
         self.expect_deck_error(["lightning_bolt_005"])
 
     def test_same_card_instance_twice_is_illegal(self):
@@ -332,7 +338,7 @@ class LobbyTests(ServerTestCase):
         self.assertEqual(two.recv_until(protocol.ERROR)["code"], protocol.DUPLICATE_ID)
 
     def test_overlapping_decks_are_rejected(self):
-        """Both decks come from one shared set, so an instance cannot be in both."""
+        """Both decks come from one shared set, so the same instance cannot be in both."""
         one, two = self.connect(), self.connect()
         self.send_ready(one, "player_1", self.DECK_ONE)
         one.recv_until(protocol.GAME_STATE_UPDATE)
@@ -374,18 +380,18 @@ class SetupTests(ServerTestCase):
         self.assertEqual(state["library_counts"]["player_1"], len(self.DECK_ONE) - 7)
 
     def test_opponent_hand_is_hidden(self):
-        """A player sees their own hand, but only a count of the opponent's."""
+        """A player sees their own hand, but only a count for the hand of the opponent."""
         clients, active, _ = self.start_game()
         state = clients["player_1"].last_state
 
         self.assertEqual(len(clients["player_1"].hand("player_1")), 7)
         self.assertNotIn("player_2", state.get("hand", {}))
         self.assertEqual(state["hand_counts"]["player_2"], 7)
-        # Libraries are always counts only, never card lists.
+        # A library is always only a count, and never a list of cards.
         self.assertIsInstance(state["library_counts"]["player_2"], int)
 
     def test_mulligan_requires_exactly_n_cards_bottomed(self):
-        """Keeping after one mulligan must bottom exactly one card."""
+        """A player who keeps after one mulligan has to bottom exactly one card."""
         one, two = self.connect(), self.connect()
         self.send_ready(one, "player_1", self.DECK_ONE)
         one.recv_until(protocol.GAME_STATE_UPDATE)
@@ -399,12 +405,12 @@ class SetupTests(ServerTestCase):
         redraw = one.recv_until(protocol.GAME_STATE_UPDATE, in_mulligan)
         self.assertEqual(len(one.hand("player_1")), 7)
 
-        # Keeping with zero bottomed cards is now illegal.
+        # Keeping with no card on the bottom is illegal now.
         one.send({"type": "MULLIGAN_CHOICE", "seq_num": redraw["seq_num"],
                   "keep": True, "cards_to_bottom": []})
         self.assertEqual(one.recv_until(protocol.ERROR)["code"], protocol.ILLEGAL_ACTION)
 
-        # Keeping with exactly one is accepted, leaving a six-card hand.
+        # Keeping with exactly one card works, and leaves a hand of 6 cards.
         one.send({"type": "MULLIGAN_CHOICE", "seq_num": redraw["seq_num"],
                   "keep": True, "cards_to_bottom": [one.hand("player_1")[0]]})
 
@@ -439,8 +445,8 @@ class TurnStructureTests(ServerTestCase):
         clients, active, _ = self.start_game()
         inactive = self.other(active)
 
-        # start_game already consumed the Untap and Upkeep transitions on its way
-        # to the first priority window, so the observed sequence resumes at Draw.
+        # start_game already read the Untap and Upkeep transitions on its way to
+        # the first priority window, so what we see here starts again at Draw.
         seen = [protocol.UNTAP, protocol.UPKEEP]
         for _ in range(40):
             self.pass_priority(clients, active)
@@ -457,22 +463,23 @@ class TurnStructureTests(ServerTestCase):
         ])
 
     def test_first_player_does_not_draw_on_turn_one(self):
-        """The opening hand stays at seven through the first Draw Step."""
+        """The opening hand still holds 7 cards after the first Draw Step."""
         clients, active, _ = self.start_game()
         self.pass_until(clients, active, protocol.PRECOMBAT_MAIN)
         self.assertEqual(len(clients[active].hand(active)), 7)
         self.assertEqual(clients[active].last_state["turn"], 1)
 
     def test_untap_step_grants_no_priority(self):
-        """The first PRIORITY_GRANT of the game belongs to the Upkeep Step."""
+        """The first PRIORITY_GRANT of the game comes from the Upkeep Step."""
         clients, active, grant = self.start_game()
-        # start_game stops at the first grant; the phase then is UPKEEP, not UNTAP.
+        # start_game stops at the first grant, and the phase there is UPKEEP and
+        # not UNTAP.
         upkeep = clients[active].last_state
-        self.assertEqual(upkeep["phase"], protocol.UNTAP)   # last state update
-        self.assertEqual(grant["player_id"], active)        # AP acts first
+        self.assertEqual(upkeep["phase"], protocol.UNTAP)   # The last state update.
+        self.assertEqual(grant["player_id"], active)        # The AP acts first.
 
 
-# --- Priority, tokens and the stack (RFC Sections 8.1-8.5) -----------
+# --- Priority, the tokens, and the stack (RFC Sections 8.1 to 8.5) ---
 
 class PriorityTests(ServerTestCase):
 
@@ -483,7 +490,7 @@ class PriorityTests(ServerTestCase):
         error = clients[active].recv_until(protocol.ERROR)
         self.assertEqual(error["code"], protocol.STALE_ACTION)
         self.assertEqual(error["rejected_action"]["type"], "PRIORITY_PASS")
-        # The server re-issues PRIORITY_GRANT so the player may try again.
+        # The server sends PRIORITY_GRANT again so the player can try once more.
         self.assertEqual(clients[active].recv_until(protocol.PRIORITY_GRANT)["player_id"],
                          active)
 
@@ -497,12 +504,12 @@ class PriorityTests(ServerTestCase):
     def test_active_player_receives_priority_first(self):
         clients, active, grant = self.start_game()
         clients[active].send({"type": "PRIORITY_PASS", "seq_num": grant["seq_num"]})
-        # Only after the AP passes does the NAP get priority.
+        # The NAP only gets priority after the AP passes.
         nap_grant = clients[self.other(active)].recv_until(protocol.PRIORITY_GRANT)
         self.assertEqual(nap_grant["player_id"], self.other(active))
 
     def test_land_only_in_main_phase(self):
-        """Playing a land during Upkeep is a WRONG_PHASE error."""
+        """Playing a land during the Upkeep Step gives a WRONG_PHASE error."""
         clients, active, grant = self.start_game()
         land = next(c for c in clients[active].hand(active) if cards.lookup(c).is_land)
         clients[active].send({"type": "PLAY_LAND", "seq_num": grant["seq_num"],
@@ -531,11 +538,11 @@ class PriorityTests(ServerTestCase):
         battlefield = clients[active].last_state["battlefield"][active]
         self.assertEqual([p["id"] for p in battlefield], [land])
         self.assertTrue(clients[active].last_state["land_played_this_turn"])
-        # The Active Player retains priority after playing a land.
+        # The Active Player keeps priority after playing a land.
         self.assertEqual(grant["player_id"], active)
 
     def test_mana_payment_must_match_the_printed_cost(self):
-        """An empty payment does not satisfy Lightning Bolt's {R}."""
+        """An empty payment does not pay the {R} that Lightning Bolt costs."""
         clients, active, _ = self.start_game()
         self.pass_until(clients, active, protocol.PRECOMBAT_MAIN)
         grant, _ = self.play_a_land(clients, active)
@@ -549,7 +556,7 @@ class PriorityTests(ServerTestCase):
                          protocol.INSUFFICIENT_MANA)
 
     def test_cannot_pay_without_an_untapped_source(self):
-        """The right payment still fails with no land on the battlefield."""
+        """Even the right payment fails when no land is on the battlefield."""
         clients, active, _ = self.start_game()
         self.pass_until(clients, active, protocol.PRECOMBAT_MAIN)
         grant = clients[active].recv_until(protocol.PRIORITY_GRANT)
@@ -563,7 +570,7 @@ class PriorityTests(ServerTestCase):
                          protocol.INSUFFICIENT_MANA)
 
     def test_bolt_resolves_for_three_damage(self):
-        """A full cast -> STACK_PUSH -> both pass -> STACK_RESOLVE cycle."""
+        """A whole cycle of cast, STACK_PUSH, both players pass, and STACK_RESOLVE."""
         clients, active, _ = self.start_game()
         inactive = self.other(active)
         self.pass_until(clients, active, protocol.PRECOMBAT_MAIN)
@@ -581,7 +588,8 @@ class PriorityTests(ServerTestCase):
         self.assertEqual(push["targets"], [inactive])
         self.assertEqual(push["controller"], active)
 
-        # The caster retains priority; both then pass so the spell resolves.
+        # The player who cast it keeps priority, and then both pass so that the
+        # spell resolves.
         grant = clients[active].recv_until(protocol.PRIORITY_GRANT)
         clients[active].send({"type": "PRIORITY_PASS", "seq_num": grant["seq_num"]})
         grant = clients[inactive].recv_until(protocol.PRIORITY_GRANT)
@@ -595,7 +603,7 @@ class PriorityTests(ServerTestCase):
 
         clients[active].recv_until(protocol.GAME_STATE_UPDATE)
         self.assertEqual(clients[active].last_state["life_totals"][inactive], 17)
-        # The spell went to its owner's graveyard, and the stack is empty again.
+        # The spell went to the graveyard of its owner, and the stack is empty again.
         self.assertIn(bolt, clients[active].last_state["graveyard"][active])
         self.assertEqual(clients[active].last_state["stack"], [])
 
@@ -612,13 +620,13 @@ class PriorityTests(ServerTestCase):
         self.assertEqual(clients[active].recv_until(protocol.ERROR)["code"],
                          protocol.ILLEGAL_TARGET)
 
-    # Three one-mana creatures each, so at least two are always in the opening
-    # hand whichever player wins the coin flip.
+    # Each deck holds three creatures that cost one mana, so the opening hand
+    # always holds at least two of them, no matter who wins the coin flip.
     SORCERY_ONE = instances("mountain", 5) + instances("monastery_swiftspear", 3)
     SORCERY_TWO = instances("plains", 5) + instances("savannah_lions", 3)
 
     def test_sorcery_speed_spell_needs_an_empty_stack(self):
-        """A creature cannot be cast while a spell is already on the stack."""
+        """A player cannot cast a creature while a spell is already on the stack."""
         clients, active, _ = self.start_game(deck_one=self.SORCERY_ONE,
                                              deck_two=self.SORCERY_TWO)
         self.pass_until(clients, active, protocol.PRECOMBAT_MAIN)
@@ -633,8 +641,9 @@ class PriorityTests(ServerTestCase):
         clients[active].recv_until(protocol.STACK_PUSH)
         grant = clients[active].recv_until(protocol.PRIORITY_GRANT)
 
-        # A second creature at sorcery speed is illegal with a non-empty stack.
-        # Timing is checked before mana, so this is WRONG_PHASE, not a mana error.
+        # A second creature at sorcery speed is illegal while the stack is not
+        # empty. We check the timing before the mana, so we get WRONG_PHASE here
+        # and not a mana error.
         clients[active].send({"type": "CAST_SPELL", "seq_num": grant["seq_num"],
                               "card_id": creatures[1], "targets": [],
                               "mana_payment": {colour: 1}})
@@ -646,13 +655,13 @@ class PriorityTests(ServerTestCase):
 
 class CombatTests(ServerTestCase):
 
-    # One-mana creatures with no haste, from disjoint colours, so whichever
-    # player wins the coin flip can perform the test.
+    # Creatures that cost one mana and have no haste, in colors that do not
+    # overlap, so the test works no matter who wins the coin flip.
     LIONS = instances("plains", 4) + instances("savannah_lions", 4)
     MYSTICS = instances("forest", 4) + instances("elvish_mystic", 4)
 
     def cast_a_creature(self, clients, active):
-        """Play a land and cast a one-mana creature; returns its card id."""
+        """Play a land, cast a creature that costs one mana, and return its card ID."""
         self.pass_until(clients, active, protocol.PRECOMBAT_MAIN)
         grant, land = self.play_a_land(clients, active)
 
@@ -664,14 +673,14 @@ class CombatTests(ServerTestCase):
                               "mana_payment": {colour: 1}})
         clients[active].recv_until(protocol.STACK_PUSH)
 
-        # Both pass so the creature resolves onto the battlefield.
+        # Both players pass, so the creature resolves onto the battlefield.
         self.pass_priority(clients, active)
         self.pass_priority(clients, self.other(active))
         clients[active].recv_until(protocol.STACK_RESOLVE)
         return creature
 
     def test_summoning_sickness_prevents_attacking(self):
-        """A creature that arrived this turn cannot attack without haste."""
+        """A creature that entered play this turn cannot attack unless it has haste."""
         clients, active, _ = self.start_game(deck_one=self.LIONS, deck_two=self.MYSTICS)
         creature = self.cast_a_creature(clients, active)
 
@@ -688,13 +697,13 @@ class CombatTests(ServerTestCase):
         self.assertEqual(error["code"], protocol.ILLEGAL_ACTION)
         self.assertIn("summoning sickness", error["message"])
 
-    # Monastery Swiftspear (1/2, haste) on both sides, using different copies.
+    # Monastery Swiftspear, a 1/2 with haste, on both sides, with different copies.
     HASTE_ONE = instances("mountain", 6) + instances("monastery_swiftspear", 2)
     HASTE_TWO = (instances("mountain", 6, start=7)
                  + instances("monastery_swiftspear", 2, start=3))
 
     def test_haste_creature_attacks_the_turn_it_arrives(self):
-        """Monastery Swiftspear has haste, so summoning sickness does not stop it."""
+        """Monastery Swiftspear has haste, so summoning sickness does not stop it from attacking."""
         clients, active, _ = self.start_game(deck_one=self.HASTE_ONE,
                                              deck_two=self.HASTE_TWO)
         inactive = self.other(active)
@@ -705,27 +714,27 @@ class CombatTests(ServerTestCase):
             "type": "DECLARE_ATTACKERS", "seq_num": transition["seq_num"],
             "attackers": [{"creature_id": creature, "target": inactive}]})
 
-        # Declaring an attacker taps it immediately (RFC Section 9.3).
+        # An attacker taps as soon as the player declares it (RFC Section 9.3).
         clients[active].recv_until(protocol.GAME_STATE_UPDATE)
         entry = next(p for p in clients[active].last_state["battlefield"][active]
                      if p["id"] == creature)
         self.assertTrue(entry["tapped"])
 
-        # Let the defender decline to block, then push through to damage.
+        # The defender does not block, and then we go on to the damage.
         blockers = self.pass_until(clients, active, protocol.DECLARE_BLOCKERS_STEP)
         clients[inactive].send({"type": "DECLARE_BLOCKERS",
                                 "seq_num": blockers["seq_num"], "blockers": []})
         self.pass_priority(clients, active)
         self.pass_priority(clients, inactive)
 
-        # Unblocked, so Swiftspear's power of 1 goes straight to the player.
+        # Nobody blocked, so the power of 1 goes straight to the player.
         result = clients[active].recv_until(protocol.COMBAT_DAMAGE_RESULT)
         self.assertEqual(result["life_totals"][inactive], 19)
         self.assertEqual(result["damage_events"],
                          [{"source": creature, "target": inactive, "amount": 1}])
 
     def test_declare_attackers_token_is_the_phase_transition(self):
-        """DECLARE_ATTACKERS echoes the PHASE_TRANSITION's seq_num."""
+        """DECLARE_ATTACKERS echoes the seq_num of the PHASE_TRANSITION."""
         clients, active, _ = self.start_game()
         transition = self.pass_until(clients, active, protocol.DECLARE_ATTACKERS_STEP)
 
@@ -734,7 +743,7 @@ class CombatTests(ServerTestCase):
         self.assertEqual(clients[active].recv_until(protocol.ERROR)["code"],
                          protocol.STALE_ACTION)
 
-        # An empty declaration is legal and skips straight to End of Combat.
+        # An empty declaration is legal, and it goes straight to End of Combat.
         clients[active].send({"type": "DECLARE_ATTACKERS",
                               "seq_num": transition["seq_num"], "attackers": []})
         end = clients[active].recv_until(
@@ -751,7 +760,7 @@ class GameOverTests(ServerTestCase):
         clients, active, grant = self.start_game()
         inactive = self.other(active)
 
-        # CONCEDE may be sent by either player at any time, even without priority.
+        # Either player can send CONCEDE at any time, even without priority.
         clients[inactive].send({"type": "CONCEDE", "seq_num": grant["seq_num"],
                                 "player_id": inactive})
         over = clients[active].recv_until(protocol.GAME_OVER)
@@ -759,7 +768,7 @@ class GameOverTests(ServerTestCase):
         self.assertEqual(over["winner_id"], active)
         self.assertEqual(over["loser_id"], inactive)
 
-        # The same TCP connections may start a new game (RFC Section 6.6).
+        # The same TCP connections can start a new game (RFC Section 6.6).
         time.sleep(0.3)
         self.send_ready(clients["player_1"], "player_1", self.DECK_ONE)
         clients["player_1"].recv_until(protocol.GAME_STATE_UPDATE)
@@ -772,7 +781,7 @@ class GameOverTests(ServerTestCase):
         self.assertEqual(len(clients["player_1"].hand("player_1")), 7)
 
     def test_disconnect_ends_the_game(self):
-        """Losing a connection ends the game with reason DISCONNECT."""
+        """When a connection drops, the game ends with the reason DISCONNECT."""
         clients, active, _ = self.start_game()
         inactive = self.other(active)
 

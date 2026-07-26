@@ -20,20 +20,22 @@ This module implements the priority state machine of RFC Section 8:
                                    [STEP_ADVANCE]   resolve top item,
                                                     AP gets priority again
 
-The rules, restated (RFC Section 8.1):
-  1. The Active Player receives priority first in every priority window.
-  2. A player holding priority may cast a spell, activate a non-mana ability, or pass.
-  3. Casting or activating puts an item on the stack; that player retains priority.
-  4. Passing hands priority to the opponent.
-  5. Two consecutive passes with a non-empty stack resolve the top item, then the
-     Active Player receives priority again.
-  6. Two consecutive passes with an empty stack end the step.
+The same rules in our own words (RFC Section 8.1):
+  1. The Active Player gets priority first in every priority window.
+  2. A player who holds priority can cast a spell, activate an ability that is
+     not a mana ability, or pass.
+  3. Casting or activating puts an item on the stack, and that player keeps
+     priority.
+  4. Passing gives priority to the opponent.
+  5. Two passes in a row while the stack is not empty resolve the top item, and
+     then the Active Player gets priority again.
+  6. Two passes in a row while the stack is empty end the step.
 """
 
 from . import cards, effects, mana, protocol
 from .state import Permanent, StackItem
 
-# What a player may send while they hold priority.
+# What a player can send while they hold priority.
 PRIORITY_ACTIONS = frozenset({
     protocol.PRIORITY_PASS,
     protocol.CAST_SPELL,
@@ -43,9 +45,9 @@ PRIORITY_ACTIONS = frozenset({
 
 
 def run_priority_window(engine) -> None:
-    """Run one priority window; returns when the step should advance.
+    """Run one priority window. This returns when the step should move on.
 
-    Raises GameOver if a win condition is met at any point inside the window.
+    It raises GameOver if a player wins or loses at any point inside the window.
     """
     state = engine.state
     active_player = state.active_player
@@ -53,7 +55,7 @@ def run_priority_window(engine) -> None:
     consecutive_passes = 0
 
     while True:
-        # State-based actions are always checked before priority is granted
+        # We always check the state-based actions before we grant priority
         # (RFC Section 8.4).
         engine.check_state_based_actions()
 
@@ -69,28 +71,29 @@ def run_priority_window(engine) -> None:
                 holder = state.opponent_of(holder)   # Rule 4.
                 continue
 
-            # Both players have now passed consecutively.
+            # Both players have now passed one after the other.
             if state.stack:
                 resolve_top_of_stack(engine)         # Rule 5.
                 consecutive_passes = 0
                 holder = active_player
                 continue
-            state.priority_holder = None             # Rule 6: the step ends.
+            state.priority_holder = None             # Rule 6, so the step ends.
             return
 
-        # Any other action is a game action: on success the acting player keeps
-        # priority (rule 3) and the consecutive-pass count restarts.
+        # Every other action is a game action. When it works, the player who
+        # acted keeps priority, which is rule 3, and we start counting the passes
+        # in a row again from zero.
         if _handle_priority_action(engine, holder, pdu):
-            # Report the new state before handing priority back.  Without this a
-            # client could not tell that a card had left its hand, since
-            # STACK_PUSH alone says nothing about zones.
+            # We send the new state before we give priority back. Without this a
+            # client cannot tell that a card left the hand, because STACK_PUSH on
+            # its own says nothing about zones.
             engine.broadcast_state_update()
             consecutive_passes = 0
-        # On failure an ERROR was already sent; the loop simply re-grants.
+        # When it fails we already sent an ERROR, and the loop grants again.
 
 
 def _handle_priority_action(engine, player_id: str, pdu: dict) -> bool:
-    """Dispatch one game action. Returns True if it was legal and applied."""
+    """Send one game action to the right handler. True means it was legal and we applied it."""
     if pdu["type"] == protocol.CAST_SPELL:
         return cast_spell(engine, player_id, pdu)
     if pdu["type"] == protocol.ACTIVATE_ABILITY:
@@ -103,7 +106,7 @@ def _handle_priority_action(engine, player_id: str, pdu: dict) -> bool:
 # --- Casting spells (RFC Section 10.2.7) ----------------------------------
 
 def cast_spell(engine, player_id: str, pdu: dict) -> bool:
-    """Validate and cast a spell, putting it on the stack."""
+    """Check a spell and cast it, which puts it on the stack."""
     state = engine.state
     player = state.player(player_id)
     card_id = pdu.get("card_id")
@@ -124,9 +127,9 @@ def cast_spell(engine, player_id: str, pdu: dict) -> bool:
                           "Lands are played with PLAY_LAND, not cast.", pdu)
         return False
 
-    # Timing.  Instants may be cast whenever their controller holds priority;
-    # everything else is sorcery speed: only the Active Player, only in a Main
-    # Phase, and only with an empty stack (RFC Section 7.5).
+    # Timing. A player can cast an instant whenever they hold priority. Every
+    # other card is sorcery speed, which means only the Active Player, only
+    # during a Main Phase, and only while the stack is empty (RFC Section 7.5).
     if not card.is_instant:
         if player_id != state.active_player or state.phase not in protocol.MAIN_PHASES:
             engine.send_error(player_id, protocol.WRONG_PHASE,
@@ -147,9 +150,10 @@ def cast_spell(engine, player_id: str, pdu: dict) -> bool:
     if not _validate_targets(engine, player_id, target_spec, targets, pdu):
         return False
 
-    # Mana last, because paying it taps permanents.  check_matches_cost verifies
-    # the declared payment is the right one; pay() verifies the player can
-    # actually produce it and taps the sources atomically.
+    # We handle the mana last, because paying it taps permanents.
+    # check_matches_cost makes sure the declared payment is the right one, and
+    # pay() makes sure the player can really produce it and taps the sources in
+    # one step.
     try:
         mana.check_matches_cost(pdu.get("mana_payment"), card.cost)
         mana.pay(player, pdu.get("mana_payment"))
@@ -171,7 +175,7 @@ def cast_spell(engine, player_id: str, pdu: dict) -> bool:
 # --- Activating abilities (RFC Section 10.2.8) ---------------------------
 
 def activate_ability(engine, player_id: str, pdu: dict) -> bool:
-    """Validate and activate a non-mana ability, putting it on the stack."""
+    """Check an ability that is not a mana ability and activate it, which puts it on the stack."""
     state = engine.state
     player = state.player(player_id)
     source_id = pdu.get("source_id")
@@ -196,7 +200,8 @@ def activate_ability(engine, player_id: str, pdu: dict) -> bool:
             engine.send_error(player_id, protocol.ILLEGAL_ACTION,
                               f"{cards.name_of(source_id)} is already tapped.", pdu)
             return False
-        # Summoning sickness blocks abilities with the tap symbol (RFC Section 3).
+        # Summoning sickness stops an ability that has the tap symbol in its
+        # cost (RFC Section 3).
         if permanent.is_creature and permanent.summoning_sick:
             engine.send_error(player_id, protocol.ILLEGAL_ACTION,
                               f"{cards.name_of(source_id)} has summoning sickness.", pdu)
@@ -266,21 +271,21 @@ def play_land(engine, player_id: str, pdu: dict) -> bool:
     player.battlefield.append(Permanent(card_id=card_id, controller=player_id,
                                         summoning_sick=False))
     player.land_played_this_turn = True
-    # The caller broadcasts the updated state and the loop re-issues
-    # PRIORITY_GRANT, so the Active Player retains priority (RFC Section 7.5).
+    # The caller sends the updated state and the loop sends PRIORITY_GRANT
+    # again, so the Active Player keeps priority (RFC Section 7.5).
     return True
 
 
 # --- Stack resolution (RFC Section 8.4) ---------------------------------
 
 def resolve_top_of_stack(engine) -> None:
-    """Pop the top item, check its targets, and either resolve it or fizzle it."""
+    """Take the top item off the stack, check its targets, and resolve or fizzle it."""
     state = engine.state
     item = state.stack.pop()
 
     target_spec = _target_spec_of(item)
 
-    # If every target has become illegal, the item fizzles with no effect.
+    # If every target became illegal, the item fizzles and does nothing.
     if target_spec != effects.NO_TARGET and item.targets:
         still_legal = [
             target for target in item.targets
@@ -306,31 +311,33 @@ def resolve_top_of_stack(engine) -> None:
         "state_changes": state_changes,
     })
 
-    # Check state-based actions before anything else: a lethal effect ends the
-    # game here and now, with no further priority windows (RFC Section 8.4).
+    # We check the state-based actions before anything else. An effect that kills
+    # a player ends the game right here, and we open no more priority windows
+    # (RFC Section 8.4).
     engine.check_state_based_actions()
     engine.broadcast_state_update()
 
-    # A permanent that just arrived may have an enter-the-battlefield trigger,
-    # which goes on the stack before priority is granted again.
+    # A permanent that just entered play can have an enter-the-battlefield
+    # trigger. That trigger goes on the stack before we grant priority again.
     if entered is not None:
         engine.fire_enter_battlefield_triggers(entered)
 
 
 def _apply(engine, item: StackItem) -> tuple:
-    """Apply a resolving item. Returns (state_changes, permanent_that_entered)."""
+    """Apply an item that is resolving. Returns (state_changes, permanent_that_entered)."""
     state = engine.state
 
     if item.item_type == protocol.ITEM_SPELL:
         card = cards.lookup(item.source)
         if card.is_permanent:
-            # Creatures, artifacts and enchantments enter the battlefield.
+            # Creatures, artifacts and enchantments go to the battlefield.
             permanent = Permanent(card_id=item.source, controller=item.controller)
             state.player(item.controller).battlefield.append(permanent)
             return [effects.change("PERMANENT_ENTERS", card_id=item.source,
                                    controller=item.controller, tapped=False)], permanent
 
-        # Instants and sorceries take effect, then go to their owner's graveyard.
+        # An instant or a sorcery does its effect and then goes to the graveyard
+        # of its owner.
         effect = effects.spell_effect_for(card)
         changes = effect(state, item) if effect else []
         state.player(item.controller).graveyard.append(item.source)
@@ -340,13 +347,13 @@ def _apply(engine, item: StackItem) -> tuple:
         ability = effects.abilities_of(item.source)[item.ability_index]
         return ability.effect(state, item), None
 
-    # A triggered ability.
+    # Everything left is a triggered ability.
     trigger = effects.ALL_TRIGGERS[item.trigger_key]
     return trigger.effect(state, item), None
 
 
 def _target_spec_of(item: StackItem) -> str:
-    """The target specification that governs a stack item's targets."""
+    """The target rule that decides which targets a stack item can have."""
     if item.item_type == protocol.ITEM_SPELL:
         return effects.target_spec_for_spell(cards.lookup(item.source)) or effects.NO_TARGET
     if item.item_type == protocol.ITEM_ABILITY:
@@ -355,7 +362,7 @@ def _target_spec_of(item: StackItem) -> str:
 
 
 def _send_to_graveyard_if_spell(state, item: StackItem) -> None:
-    """A fizzled instant or sorcery still ends up in its owner's graveyard."""
+    """An instant or a sorcery that fizzled still goes to the graveyard of its owner."""
     if item.item_type != protocol.ITEM_SPELL:
         return
     card = cards.lookup(item.source)
@@ -366,7 +373,7 @@ def _send_to_graveyard_if_spell(state, item: StackItem) -> None:
 # --- Target validation ---------------------------------------------------
 
 def _validate_targets(engine, player_id: str, target_spec: str, targets: list, pdu: dict) -> bool:
-    """Check the number of targets and that each one is currently legal."""
+    """Check how many targets there are, and check that each one is legal right now."""
     state = engine.state
 
     if target_spec == effects.NO_TARGET:
@@ -376,7 +383,7 @@ def _validate_targets(engine, player_id: str, target_spec: str, targets: list, p
             return False
         return True
 
-    # Every targeted effect in this build takes exactly one target.
+    # Every effect with a target in our build takes exactly one target.
     if len(targets) != 1:
         engine.send_error(player_id, protocol.ILLEGAL_TARGET,
                           f"Exactly one target is required; got {len(targets)}.", pdu)

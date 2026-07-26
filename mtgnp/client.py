@@ -1,20 +1,20 @@
 """
 The MTGNP Player Client.
 
-Responsibilities (RFC Section 4.3): keep a local rendering of this player's
-Visible State, echo the correct seq_num in every action PDU, treat every
-GAME_STATE_UPDATE as authoritative, and send PING heartbeats.
+What the client does (RFC Section 4.3). It shows the Visible State of this
+player, echoes the right seq_num in every action PDU, treats every
+GAME_STATE_UPDATE as the truth, and sends PING heartbeats.
 
-The client computes no game outcomes.  It never decides whether an action is
-legal -- it formats the PDU, sends it, and shows whatever the server replies.
-Any state it renders came from the server.
+The client works out no game outcomes at all. It never decides whether an action
+is legal. It builds the PDU, sends it, and shows whatever the server answers.
+Everything it displays came from the server.
 
 Threading model
 ---------------
-A reader thread frames incoming PDUs onto a queue; a heartbeat thread sends PING
-and gives up if no PONG arrives; the main thread drains the queue, renders each
-PDU, and prompts the user when the server is waiting for an action.  The main
-thread is the only one that prompts, so prompts never interleave with each other.
+A reader thread reads the incoming PDUs onto a queue. A heartbeat thread sends
+PING and gives up when no PONG comes back. The main thread takes the PDUs off the
+queue, displays each one, and asks the player what to do when the server waits
+for an action. Only the main thread asks questions, so two prompts never mix.
 """
 
 import argparse
@@ -26,21 +26,21 @@ import time
 from . import cards, effects, mana, protocol
 from .verbose import VerboseLogger
 
-PING_INTERVAL_SECONDS = 30    # RECOMMENDED by RFC Section 4.3.
-PONG_TIMEOUT_SECONDS = 10     # RECOMMENDED: give up 10 s after an unanswered PING.
+PING_INTERVAL_SECONDS = 30    # The value that RFC Section 4.3 recommends.
+PONG_TIMEOUT_SECONDS = 10     # Also recommended: give up 10 s after a PING with no answer.
 
 
 class ClientQuit(Exception):
-    """The user asked to leave, or standard input ran out.
+    """The player asked to leave, or the standard input ended.
 
-    Prompt loops re-ask until they get a command they understand, so end-of-input
-    must be an exception rather than a value: returning a string would make those
-    loops spin forever once stdin is exhausted.
+    The prompt loops keep asking until they get a command they understand, so the
+    end of the input has to be an exception and not a value. If we returned a
+    string instead, those loops would spin forever once stdin runs out.
     """
 
 
 class MTGNPClient:
-    """A thin client: renders server state and sends the player's actions."""
+    """A simple client that displays the server state and sends the actions of the player."""
 
     def __init__(self, player_id: str, deck_list: list, host: str, port: int,
                  verbose: bool = False, pretty: bool = False):
@@ -54,22 +54,22 @@ class MTGNPClient:
         self.inbox: queue.Queue = queue.Queue()
         self.running = True
 
-        # PING uses its own counter, independent of the priority token
-        # (RFC Section 5.4).
+        # PING has its own counter, which has nothing to do with the priority
+        # token (RFC Section 5.4).
         self._ping_seq = 0
         self._pong_received = threading.Event()
 
-        # The most recent authoritative state, plus what we still owe the server.
+        # The newest state from the server, and what we still owe the server.
         self.state: dict = {}
         self.kept_hand = False
-        # CONCEDE echoes the seq_num of the most recent server PDU of any type,
-        # not necessarily a PRIORITY_GRANT (RFC Section 5.4).
+        # CONCEDE echoes the seq_num of the newest server PDU of any type, and
+        # that PDU does not have to be a PRIORITY_GRANT (RFC Section 5.4).
         self._last_server_seq = 0
 
     # --- Connection ------------------------------------------------------
 
     def run(self) -> None:
-        """Connect, announce readiness, then serve the server's requests."""
+        """Connect, say that we are ready, and then answer what the server asks."""
         self.socket = socket.create_connection((self.host, self.port))
         self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.logger.note(f"connected to {self.host}:{self.port} as {self.player_id}")
@@ -85,7 +85,7 @@ class MTGNPClient:
                 pdu = self.inbox.get(timeout=0.5)
             except queue.Empty:
                 continue
-            if pdu is None:          # The reader thread reports the socket closed.
+            if pdu is None:          # This is how the reader thread says the socket closed.
                 break
             try:
                 self.handle(pdu)
@@ -96,11 +96,11 @@ class MTGNPClient:
         self.logger.note("disconnected")
 
     def quit(self) -> None:
-        """Leave the game: concede if one is in progress, then close the socket."""
+        """Leave the game. We concede first when a game is running, and then close the socket."""
         self.logger.note("input closed; conceding and exiting")
         if self.state:
-            # Best effort: CONCEDE may be sent at any time, echoing the seq_num of
-            # the most recent server PDU (RFC Section 5.4).
+            # We try our best here. A client can send CONCEDE at any time, and it
+            # echoes the seq_num of the newest server PDU (RFC Section 5.4).
             self.send({"type": protocol.CONCEDE, "seq_num": self._last_server_seq,
                        "player_id": self.player_id})
         self.running = False
@@ -132,7 +132,7 @@ class MTGNPClient:
         self.inbox.put(None)
 
     def _heartbeat_loop(self) -> None:
-        """Send PING regularly and hang up if the server stops answering."""
+        """Send PING every so often, and close the connection if the server stops answering."""
         while self.running:
             time.sleep(PING_INTERVAL_SECONDS)
             if not self.running:
@@ -158,7 +158,7 @@ class MTGNPClient:
     # --- Dispatch --------------------------------------------------------
 
     def handle(self, pdu: dict) -> None:
-        """React to one server PDU."""
+        """Do whatever one server PDU asks us to do."""
         pdu_type = pdu.get("type")
         seq = pdu.get("seq_num")
         if isinstance(seq, int):
@@ -207,7 +207,7 @@ class MTGNPClient:
             print(f"  (unhandled PDU type {pdu_type})")
 
     def handle_state_update(self, pdu: dict, seq: int) -> None:
-        """Accept the server's state as authoritative, then act if it asks us to."""
+        """Take the state of the server as the truth, and then act if it asks us to."""
         state = pdu.get("state") or {}
 
         if state.get("phase") == protocol.LOBBY or state.get("phase") == protocol.GAME_SETUP:
@@ -215,11 +215,12 @@ class MTGNPClient:
                   f"waiting for {state.get('waiting_for')}")
             return
 
-        # Discard any locally computed state that conflicts (RFC Section 4.3).
+        # We throw away anything we worked out here that does not agree with the
+        # server (RFC Section 4.3).
         self.state = state
         self.render_board()
 
-        # A GAME_STATE_UPDATE is also the request PDU for two decisions.
+        # A GAME_STATE_UPDATE is also the request PDU for two of the decisions.
         if state.get("phase") == protocol.MULLIGAN and not self.kept_hand:
             self.prompt_mulligan(seq)
         elif state.get("phase") == protocol.CLEANUP and self.is_active_player() \
@@ -227,21 +228,22 @@ class MTGNPClient:
             self.prompt_discard(seq)
 
     def handle_phase_transition(self, pdu: dict, seq: int) -> None:
-        """Announce the step, and answer the declaration steps it implies."""
+        """Show the new step, and answer the declaration steps that it asks for."""
         to_phase = pdu.get("to_phase")
         print(f"\n--- Turn {pdu.get('turn')}: {pdu.get('from_phase')} -> {to_phase} "
               f"(active: {pdu.get('active_player')})")
 
-        # PHASE_TRANSITION is the authoritative announcement of the new step, and
-        # the server does not follow every transition with a GAME_STATE_UPDATE.
-        # Fold these three fields in so our rendering does not lag a step behind;
-        # everything else still comes only from GAME_STATE_UPDATE.
+        # PHASE_TRANSITION is what really tells us about the new step, and the
+        # server does not send a GAME_STATE_UPDATE after every transition. We copy
+        # these three fields in so that our display does not stay one step
+        # behind. Everything else still comes only from GAME_STATE_UPDATE.
         self.state["phase"] = to_phase
         self.state["turn"] = pdu.get("turn")
         self.state["active_player"] = pdu.get("active_player")
 
-        # These three steps have no request PDU of their own: the transition is
-        # the request, and we must echo its seq_num (RFC Sections 5.4, 9.3, 9.4).
+        # These three steps do not have a request PDU of their own. The
+        # transition is the request, and we have to echo its seq_num (RFC
+        # Sections 5.4, 9.3 and 9.4).
         active = pdu.get("active_player")
         if to_phase == protocol.DECLARE_ATTACKERS_STEP and active == self.player_id:
             self.prompt_declare_attackers(seq)
@@ -256,7 +258,7 @@ class MTGNPClient:
               f"({pdu.get('reason')}) ===========")
         print(f"  winner: {pdu.get('winner_id')}   loser: {pdu.get('loser_id')}")
 
-        # The server is back in LOBBY on the same connection; a fresh
+        # The server is back in LOBBY on the same connection, and a new
         # PLAYER_READY starts another game (RFC Section 6.6).
         self.kept_hand = False
         self.state = {}
@@ -268,8 +270,8 @@ class MTGNPClient:
     # --- Outgoing actions ------------------------------------------------
 
     def send_player_ready(self) -> None:
-        # PLAYER_READY keeps its own counter and is exempt from the priority-echo
-        # rule (RFC Section 6.2); one per game is enough here.
+        # PLAYER_READY has its own counter, and the rule about echoing a priority
+        # token does not apply to it (RFC Section 6.2). One per game is enough.
         self._ping_seq = max(self._ping_seq, 0)
         self.send({
             "type": protocol.PLAYER_READY,
@@ -280,7 +282,7 @@ class MTGNPClient:
         print(f"  sent PLAYER_READY with {len(self.deck_list)} cards; waiting for opponent")
 
     def prompt_priority_action(self, seq: int) -> None:
-        """Ask the user what to do while they hold priority."""
+        """Ask the player what they want to do while they hold priority."""
         while True:
             parts = _ask("  action> ").split()
             if not parts:
@@ -313,7 +315,7 @@ class MTGNPClient:
             self.handle_local_command(command)
 
     def send_cast_spell(self, seq: int, args: list) -> bool:
-        """Build CAST_SPELL. The mana payment is derived from the printed cost."""
+        """Build CAST_SPELL. We take the mana payment from the printed cost of the card."""
         card_id = args[0]
         card = cards.lookup(card_id)
         if card is None:
@@ -329,11 +331,11 @@ class MTGNPClient:
         return True
 
     def send_activate_ability(self, seq: int, args: list) -> bool:
-        """Build ACTIVATE_ABILITY: `ability <permanent_id> [index] [target]`."""
+        """Build ACTIVATE_ABILITY from `ability <permanent_id> [index] [target]`."""
         source_id = args[0]
         abilities = effects.abilities_of(source_id)
         if not abilities:
-            print(f"  {cards.name_of(source_id)} has no activated ability in this build.")
+            print(f"  {cards.name_of(source_id)} has no activated ability in our build.")
             return False
 
         rest = args[1:]
@@ -359,7 +361,7 @@ class MTGNPClient:
         return True
 
     def prompt_mulligan(self, seq: int) -> None:
-        """Keep or mulligan. Keeping after N mulligans bottoms exactly N cards."""
+        """Keep the hand or take a mulligan. Keeping after N mulligans puts exactly N cards on the bottom."""
         hand = self.my_hand()
         print(f"\n>>> Mulligan decision. Your hand ({len(hand)}):")
         for card_id in hand:
@@ -385,7 +387,7 @@ class MTGNPClient:
             self.handle_local_command(command)
 
     def prompt_discard(self, seq: int) -> None:
-        """Cleanup Step: discard down to seven cards."""
+        """The Cleanup Step, where the player discards down to 7 cards."""
         hand = self.my_hand()
         print(f"\n>>> Hand size is {len(hand)}; discard down to 7.")
         for card_id in hand:
@@ -405,7 +407,7 @@ class MTGNPClient:
                 print("  usage: discard <card_id> [card_id ...]")
 
     def prompt_declare_attackers(self, seq: int) -> None:
-        """Declare attackers; an empty declaration means no attack."""
+        """Declare the attackers. An empty declaration means that we do not attack."""
         print("\n>>> Declare attackers. 'attack <creature_id> ...', or 'attack' for none.")
         for permanent in self.my_battlefield():
             if permanent.get("power") is not None:
@@ -431,7 +433,7 @@ class MTGNPClient:
             self.handle_local_command(parts[0].lower())
 
     def prompt_declare_blockers(self, seq: int) -> None:
-        """Declare blockers as blocker:attacker pairs; empty means no blocks."""
+        """Declare the blockers as blocker:attacker pairs. An empty list means no blocks."""
         attackers = (self.state.get("combat") or {}).get("attackers") or {}
         print("\n>>> Declare blockers. 'block <blocker_id>:<attacker_id> ...', "
               "or 'block' for none.")
@@ -465,7 +467,7 @@ class MTGNPClient:
             self.handle_local_command(parts[0].lower())
 
     def prompt_damage_orders(self, seq: int) -> None:
-        """Order the blockers of each attacker blocked by two or more creatures."""
+        """Order the blockers of every attacker that two or more creatures block."""
         blocks = (self.state.get("combat") or {}).get("blocks") or {}
         multiply_blocked = {a: b for a, b in blocks.items() if len(b) >= 2}
 
@@ -491,7 +493,7 @@ class MTGNPClient:
             self.handle_local_command(parts[0].lower())
 
     def prompt_trigger_order(self, pdu: dict, seq: int) -> None:
-        """Choose the stack order of our own simultaneous triggers."""
+        """Choose the stack order of our own triggers that fired at the same time."""
         trigger_ids = pdu.get("trigger_ids") or []
         print(f"\n>>> Order your simultaneous triggers: {trigger_ids}")
         print("    The first one listed is placed on the stack first, so it resolves last.")
@@ -506,7 +508,7 @@ class MTGNPClient:
             print(f"  list exactly these ids, in your preferred order: {trigger_ids}")
 
     def prompt_trigger_choice(self, pdu: dict, seq: int) -> None:
-        """Accept or decline a trigger, choosing a target when one is required."""
+        """Say yes or no to a trigger, and choose a target when the trigger needs one."""
         legal = pdu.get("legal_targets") or []
         print(f"\n>>> Trigger from {cards.name_of(pdu.get('source_id', ''))}: "
               f"{pdu.get('effect_summary')}")
@@ -535,10 +537,10 @@ class MTGNPClient:
                 return
             self.handle_local_command(command)
 
-    # --- Local (non-protocol) commands -----------------------------------
+    # --- Local commands, which are not part of the protocol ---------------
 
     def handle_local_command(self, command: str) -> None:
-        """Commands that only affect this client and send no PDU."""
+        """The commands that only change this client and send no PDU at all."""
         if command in {"state", "s", "board"}:
             self.render_board()
         elif command in {"hand", "h"}:
@@ -549,12 +551,12 @@ class MTGNPClient:
         elif command in {"help", "?"}:
             _print_help()
         else:
-            print(f"  unknown command '{command}' -- type 'help' for the list")
+            print(f"  unknown command '{command}'. Type 'help' for the list.")
 
     # --- Rendering -------------------------------------------------------
 
     def render_board(self) -> None:
-        """Print the Visible State the server last sent us."""
+        """Print the Visible State that the server sent us last."""
         state = self.state
         if not state:
             return
@@ -616,13 +618,13 @@ class MTGNPClient:
         if pdu.get("creatures_died"):
             print(f"    died: {', '.join(pdu['creatures_died'])}")
 
-    # --- Convenience views over the authoritative state ------------------
+    # --- Small helpers that read the state from the server ----------------
 
     def my_hand(self) -> list:
-        """Our hand from the last update.
+        """Our hand, taken from the last update.
 
-        Section 10.2.2 makes `hand` an object keyed by player, while the RFC's
-        prose examples show a bare array.  Accept either shape.
+        Section 10.2.2 makes `hand` an object keyed by player, while the prose
+        examples in the RFC show a bare array. We accept both shapes.
         """
         hand = self.state.get("hand")
         if isinstance(hand, dict):
@@ -636,7 +638,7 @@ class MTGNPClient:
         return self.state.get("active_player") == self.player_id
 
     def opponent_id(self) -> str:
-        """Work out the opponent's id from whatever keys the server sent."""
+        """Work out the ID of the opponent from the keys that the server sent."""
         for field in ("life_totals", "library_counts", "battlefield", "graveyard"):
             for key in (self.state.get(field) or {}):
                 if key != self.player_id:
@@ -644,7 +646,7 @@ class MTGNPClient:
         return "opponent"
 
 
-# --- Small formatting helpers ---------------------------------------------
+# --- Small helpers that format the output ----------------------------------
 
 def _describe_card(card_id: str) -> str:
     card = cards.lookup(card_id)
@@ -660,7 +662,7 @@ def _describe_card(card_id: str) -> str:
 def _describe_permanent(permanent: dict) -> str:
     card_id = permanent.get("id", "")
     flags = ["tapped"] if permanent.get("tapped") else []
-    # Accept either spelling of the summoning-sickness flag.
+    # We accept both spellings of the summoning sickness flag.
     if permanent.get("summoning_sick") or permanent.get("summoning_sickness"):
         flags.append("summoning sick")
     body = f"{card_id:<26} {cards.name_of(card_id):<26}"
@@ -680,7 +682,7 @@ def _changes_suffix(changes) -> str:
         return ""
     parts = []
     for entry in changes:
-        # Section 10.2.14 names this `change_type`; the examples use `type`.
+        # Section 10.2.14 names this `change_type`, and the examples use `type`.
         kind = entry.get("change_type") or entry.get("type")
         detail = entry.get("target", "")
         amount = entry.get("amount")
@@ -699,32 +701,32 @@ def _print_help() -> None:
     print("""
   Actions while you hold priority:
     pass                                 pass priority
-    cast <card_id> [target]              cast a spell (mana payment is automatic)
-    land <card_id>                       play a land (Main Phase, once per turn)
+    cast <card_id> [target]              cast a spell, the mana payment is automatic
+    land <card_id>                       play a land, Main Phase only, once per turn
     ability <permanent_id> [index] [target]   activate an ability
     concede                              concede the game
 
   When the server asks for a declaration:
-    keep [card_id ...] | mull            mulligan decision
-    discard <card_id> ...                discard down to seven at Cleanup
-    attack [creature_id ...]             declare attackers (no ids = no attack)
-    block [blocker_id:attacker_id ...]   declare blockers (no pairs = no blocks)
+    keep [card_id ...] | mull            your mulligan decision
+    discard <card_id> ...                discard down to 7 cards at Cleanup
+    attack [creature_id ...]             declare attackers, no ids means no attack
+    block [blocker_id:attacker_id ...]   declare blockers, no pairs means no blocks
     order <attacker_id> <blocker_id> ... assign damage order
-    yes [target] | no                    accept or decline a trigger
+    yes [target] | no                    use a trigger or decline it
 
   Anytime:
     state    reprint the board          hand    list your hand
-    verbose  toggle PDU logging         help    this message
+    verbose  turn PDU logging on/off    help    this message
 """)
 
 
 def load_deck(path: str) -> list:
     """Read a deck file into a list of card instance IDs.
 
-    Two line formats are accepted, and `#` starts a comment:
+    We accept two kinds of line, and a `#` starts a comment:
 
-        4 lightning_bolt     -- expands to lightning_bolt_001 .. _004
-        mountain_007         -- one specific card instance
+        4 lightning_bolt     becomes lightning_bolt_001 up to _004
+        mountain_007         is one specific card instance
     """
     deck, used = [], {}
 
@@ -749,16 +751,16 @@ def load_deck(path: str) -> list:
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description="MTGNP 1.0 Player Client")
     parser.add_argument("--player-id", required=True,
-                        help="the name to claim in PLAYER_READY, e.g. player_1")
+                        help="the name to claim in PLAYER_READY, for example player_1")
     parser.add_argument("--deck", required=True,
-                        help="path to a deck file (see decks/)")
-    parser.add_argument("--host", default="127.0.0.1", help="server address")
+                        help="the path to a deck file, see the decks folder")
+    parser.add_argument("--host", default="127.0.0.1", help="the server address")
     parser.add_argument("--port", type=int, default=protocol.DEFAULT_PORT,
-                        help=f"server port (default: {protocol.DEFAULT_PORT})")
+                        help=f"the server port (default: {protocol.DEFAULT_PORT})")
     parser.add_argument("-v", "--verbose", action="store_true",
-                        help="print every PDU sent and received at startup")
+                        help="print every PDU we send and receive, starting at startup")
     parser.add_argument("--pretty", action="store_true",
-                        help="indent PDU JSON across multiple lines in verbose output")
+                        help="indent the PDU JSON over several lines in the verbose output")
     args = parser.parse_args(argv)
 
     deck_list = load_deck(args.deck)

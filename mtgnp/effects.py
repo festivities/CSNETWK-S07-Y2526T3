@@ -1,23 +1,23 @@
 """
 Card effects: spells, activated abilities and triggered abilities.
 
-The rubric asks for at least five card effects; this build implements sixteen
-spells, four activated abilities and three triggered abilities.  Implementing
-*every* printed ability on *every* card in the master list is explicitly a bonus
-objective and is deliberately out of scope -- cards whose effects are not
-implemented here are still legal deck entries, but the server refuses to cast
-them with ERROR/ILLEGAL_ACTION and the README lists them as a known limitation.
+The rubric asks for at least five card effects. We implemented 16 spells, 4
+activated abilities and 3 triggered abilities. Implementing every printed
+ability on every card in the master list is a bonus objective, so we left it out
+on purpose. A card whose effect we did not implement is still a legal deck
+entry, but the server refuses to cast it and answers with ERROR/ILLEGAL_ACTION.
+The README lists these cards as a known limitation.
 
-How an effect is written
-------------------------
-Every effect is a function `fn(state, item) -> list[state_change]`.  It mutates
-the authoritative GameState and returns the `state_changes` array that goes out
-in the STACK_RESOLVE PDU (RFC Section 10.2.14).  Effects never talk to sockets
-and never decide who has priority, which keeps them trivial to read and test.
+How we write an effect
+----------------------
+Every effect is a function `fn(state, item) -> list[state_change]`. It changes
+the authoritative GameState and returns the `state_changes` array that we send
+in the STACK_RESOLVE PDU (RFC Section 10.2.14). An effect never touches a socket
+and never decides who has priority, which makes it easy to read and to test.
 
-Targets are validated twice: once when the spell is cast, and again when it
-resolves.  If every target has become illegal in between, the item fizzles
-(RFC Section 8.4) and the effect function is never called.
+We check the targets twice, once when the player casts the spell and again when
+it resolves. If every target became illegal in between, the item fizzles (RFC
+Section 8.4) and we never call the effect function.
 """
 
 from dataclasses import dataclass, field
@@ -26,11 +26,11 @@ from . import cards
 
 # --- Target specifications -------------------------------------------------
 #
-# A spec names what a single target may be.  Every effect in this build takes
-# either no targets or exactly one.
+# A spec says what one target is allowed to be. Every effect in our build takes
+# either no target at all or exactly one target.
 
 NO_TARGET = "none"
-ANY_TARGET = "any"                  # A player or a creature ("any target").
+ANY_TARGET = "any"                  # A player or a creature, which is "any target".
 PLAYER = "player"
 CREATURE = "creature"
 TAPPED_CREATURE = "tapped_creature"
@@ -41,9 +41,9 @@ NONCREATURE_SPELL = "noncreature_spell"
 OWN_GRAVEYARD_CREATURE = "own_graveyard_creature"
 
 
-# --- state_changes record helper -------------------------------------------
-# Section 10.2.14 names this field `change_type`; the prose examples call it
-# `type`.  We follow the normative schema (see the note in state.py).
+# --- Helper for one state_changes record -----------------------------------
+# Section 10.2.14 names this field `change_type`, while the prose examples call
+# it `type`. We follow the schema, and state.py explains why.
 
 def change(change_type: str, **fields) -> dict:
     return {"change_type": change_type, **fields}
@@ -52,11 +52,11 @@ def change(change_type: str, **fields) -> dict:
 # --- Primitive effect helpers ----------------------------------------------
 
 def deal_damage(state, target: str, amount: int, source_name: str = "") -> list:
-    """Deal `amount` damage to a player or a creature.
+    """Deal `amount` damage to a player or to a creature.
 
-    Damage to a creature is *marked* on it; the creature is only destroyed when
-    state-based actions are next checked (RFC Section 8.4), which is why this
-    helper never moves anything to a graveyard itself.
+    Damage on a creature only gets marked on it. The creature dies later, when we
+    check the state-based actions again (RFC Section 8.4). This is the reason
+    that this helper never moves anything to a graveyard on its own.
     """
     if state.is_player_id(target):
         state.player(target).life -= amount
@@ -80,7 +80,7 @@ def lose_life(state, player_id: str, amount: int) -> list:
 
 
 def destroy(state, permanent_id: str) -> list:
-    """Move a permanent from the battlefield to its owner's graveyard."""
+    """Move a permanent from the battlefield to the graveyard of its owner."""
     permanent = state.find_permanent(permanent_id)
     if permanent is None:
         return []
@@ -111,7 +111,7 @@ def return_to_hand(state, permanent_id: str) -> list:
 
 
 def counter_spell(state, stack_item_id: str) -> list:
-    """Remove a spell from the stack and put its card into its owner's graveyard."""
+    """Take a spell off the stack and put its card into the graveyard of its owner."""
     target_item = state.find_stack_item(stack_item_id)
     if target_item is None:
         return []
@@ -121,7 +121,7 @@ def counter_spell(state, stack_item_id: str) -> list:
 
 
 def pump(state, permanent_id: str, power: int, toughness: int) -> list:
-    """Give a creature a power/toughness bonus until end of turn."""
+    """Give a creature a bonus to its power and toughness until end of turn."""
     permanent = state.find_permanent(permanent_id)
     if permanent is None:
         return []
@@ -131,7 +131,7 @@ def pump(state, permanent_id: str, power: int, toughness: int) -> list:
 
 
 def devotion_to_black(state, player_id: str) -> int:
-    """Count {B} symbols in the mana costs of permanents `player_id` controls."""
+    """Count the {B} symbols in the mana costs of the permanents that `player_id` controls."""
     return sum(
         permanent.card.cost.get("B", 0)
         for permanent in state.player(player_id).battlefield
@@ -139,11 +139,12 @@ def devotion_to_black(state, player_id: str) -> int:
 
 
 # --- Spell effects ---------------------------------------------------------
-# Each entry is (target specification, effect function).  The effect receives the
-# resolving StackItem, whose `targets` list has already been re-validated.
+# Each entry is a pair of a target specification and an effect function. The
+# effect gets the StackItem that is resolving, and we already checked the
+# `targets` list of that item a second time.
 
 def _damage_effect(amount: int):
-    """Build an effect that deals a fixed amount of damage to one target."""
+    """Build an effect that deals the same amount of damage to one target."""
     def effect(state, item):
         return deal_damage(state, item.targets[0], amount)
     return effect
@@ -162,12 +163,13 @@ def _unsummon(state, item):
 
 
 def _healing_salve(state, item):
-    # "Choose one" -- this build always applies the first mode, gain 3 life.
+    # The card says "choose one", and our build always uses the first mode,
+    # which gains 3 life.
     return gain_life(state, item.targets[0], 3)
 
 
 def _raise_dead(state, item):
-    """Return a creature card from your graveyard to your hand."""
+    """Return a creature card from the graveyard of the controller to their hand."""
     owner = state.player(item.controller)
     card_id = item.targets[0]
     if card_id not in owner.graveyard:
@@ -178,7 +180,7 @@ def _raise_dead(state, item):
 
 
 def _swords_to_plowshares(state, item):
-    """Exile the creature; its controller gains life equal to its power."""
+    """Exile the creature. Its controller then gains life equal to its power."""
     permanent = state.find_permanent(item.targets[0])
     if permanent is None:
         return []
@@ -217,19 +219,19 @@ SPELL_EFFECTS = {
 class Ability:
     """One activated ability of a permanent (RFC Section 10.2.8).
 
-    Mana abilities are NOT listed here: they bypass the stack entirely and are
-    handled by mana.py when a payment is declared.
+    We do not list the mana abilities here. They never use the stack, and mana.py
+    handles them when a client declares a payment.
     """
 
     description: str
-    requires_tap: bool           # Does the cost include the tap symbol?
+    requires_tap: bool           # True when the cost has the tap symbol in it.
     mana_cost: dict = field(default_factory=dict)
     target_spec: str = NO_TARGET
     effect: object = None
 
 
 def _millstone(state, item):
-    """Target player mills 2: top two library cards go to their graveyard."""
+    """The target player mills 2, so the top two library cards go to their graveyard."""
     target = state.player(item.targets[0])
     milled = []
     for _ in range(2):
@@ -270,9 +272,10 @@ ABILITIES = {
 class Trigger:
     """A triggered ability (RFC Section 8.6).
 
-    `target_spec` other than NO_TARGET means the server must send TRIGGER_CHOICE
-    to the controller to pick a target before the trigger goes on the stack; if
-    no legal target exists the trigger is discarded (RFC Section 8.6.4).
+    When `target_spec` is not NO_TARGET, the server has to send TRIGGER_CHOICE to
+    the controller so that they can pick a target, and this happens before the
+    trigger goes on the stack. If there is no legal target, we throw the trigger
+    away (RFC Section 8.6.4).
     """
 
     key: str
@@ -282,7 +285,8 @@ class Trigger:
 
 
 def _gray_merchant(state, item):
-    """Each opponent loses X life (X = devotion to black); you gain that much."""
+    """Each opponent loses X life, where X is the devotion to black, and the
+    controller gains that much life."""
     amount = item.payload.get("amount", 0)
     if amount <= 0:
         return []
@@ -295,7 +299,7 @@ def _gravedigger(state, item):
 
 
 def _goblin_guide_attack(state, item):
-    """Defending player reveals the top card; if it is a land they draw it."""
+    """The defending player reveals the top card, and takes it if it is a land."""
     defender = state.player(item.payload["defender"])
     if not defender.library:
         return [change("REVEAL", target=defender.player_id, cards=[])]
@@ -309,7 +313,7 @@ def _goblin_guide_attack(state, item):
     return changes
 
 
-# Triggers that fire when a permanent enters the battlefield.
+# The triggers that fire when a permanent enters the battlefield.
 ENTER_BATTLEFIELD_TRIGGERS = {
     "gray_merchant": Trigger(
         key="gray_merchant",
@@ -326,7 +330,7 @@ ENTER_BATTLEFIELD_TRIGGERS = {
     ),
 }
 
-# Triggers that fire when a creature is declared as an attacker.
+# The triggers that fire when a player declares a creature as an attacker.
 ATTACK_TRIGGERS = {
     "goblin_guide": Trigger(
         key="goblin_guide",
@@ -342,10 +346,10 @@ ALL_TRIGGERS = {**ENTER_BATTLEFIELD_TRIGGERS, **ATTACK_TRIGGERS}
 # --- Castability and target legality --------------------------------------
 
 def target_spec_for_spell(card: cards.Card) -> str | None:
-    """The target spec for casting `card`, or None if this build cannot cast it.
+    """The target spec for casting `card`, or None if our build cannot cast it.
 
-    Permanents (creatures, artifacts, lands) need no implemented effect: they
-    simply enter the battlefield when they resolve.
+    A permanent such as a creature, an artifact or a land does not need an effect
+    at all, because it only enters the battlefield when it resolves.
     """
     if card.base in SPELL_EFFECTS:
         return SPELL_EFFECTS[card.base][0]
@@ -355,7 +359,7 @@ def target_spec_for_spell(card: cards.Card) -> str | None:
 
 
 def spell_effect_for(card: cards.Card):
-    """The effect function for a spell, or None if it just becomes a permanent."""
+    """The effect function of a spell, or None if the spell only becomes a permanent."""
     entry = SPELL_EFFECTS.get(card.base)
     return entry[1] if entry else None
 
@@ -365,10 +369,10 @@ def abilities_of(card_id: str) -> list:
 
 
 def is_legal_target(state, spec: str, target: str, controller: str) -> bool:
-    """Is `target` currently a legal target for an effect with this spec?
+    """Is `target` a legal target right now for an effect with this spec?
 
-    Called both at cast time and again at resolution time; a target that has
-    stopped being legal in between causes the item to fizzle.
+    We call this when the player casts the spell and again when it resolves. A
+    target that stopped being legal in between makes the item fizzle.
     """
     if spec == NO_TARGET:
         return False
@@ -416,7 +420,7 @@ def is_legal_target(state, spec: str, target: str, controller: str) -> bool:
 
 
 def legal_targets_for(state, spec: str, controller: str) -> list:
-    """Every currently legal target for a spec -- used to fill TRIGGER_CHOICE."""
+    """Every legal target for a spec right now. We use this to fill in TRIGGER_CHOICE."""
     if spec == NO_TARGET:
         return []
 

@@ -1,9 +1,8 @@
 """
 The MTGNP wire protocol: message framing, PDU type names, and error codes.
 
-This module is deliberately the only place in the project that knows how a PDU
-becomes bytes on a TCP socket.  Everything above it deals in plain Python
-dictionaries.
+This module is the only place in the project that knows how a PDU becomes bytes
+on a TCP socket. Every module above it works with plain Python dictionaries.
 
 Framing (RFC 0001, Section 5.2)
 -------------------------------
@@ -15,9 +14,9 @@ Framing (RFC 0001, Section 5.2)
     |                  JSON Payload (variable length)               |
     +---------------------------------------------------------------+
 
-Each PDU is a UTF-8 JSON object preceded by its byte length as a 4-byte
-big-endian unsigned integer.  A receiver MUST read exactly that many bytes
-before attempting to parse the JSON.  A PDU MUST NOT exceed 65,535 bytes.
+Each PDU is a UTF-8 JSON object with its byte length written in front of it as a
+4-byte big-endian unsigned integer. A receiver must read exactly that many bytes
+before it parses the JSON. A PDU must not be larger than 65,535 bytes.
 """
 
 import json
@@ -27,11 +26,11 @@ import socket
 
 DEFAULT_PORT = 4444        # The default MTGNP server port.
 LENGTH_PREFIX_BYTES = 4    # Size of the big-endian length prefix.
-MAX_PAYLOAD_BYTES = 65535  # A PDU MUST NOT exceed this many bytes.
+MAX_PAYLOAD_BYTES = 65535  # A PDU must not be larger than this.
 
-# Exactly two players are seated per game (RFC Section 5.1).  These labels name
-# the two seats before the clients choose their own IDs in PLAYER_READY, and are
-# what the lobby reports in `waiting_for`.
+# A game has exactly two players (RFC Section 5.1). These labels name the two
+# player slots before the clients choose their own IDs in PLAYER_READY, and they
+# are also what the lobby reports in `waiting_for`.
 MAX_PLAYERS = 2
 PLAYER_SLOT_LABELS = ("player_1", "player_2")
 
@@ -39,45 +38,46 @@ PLAYER_SLOT_LABELS = ("player_1", "player_2")
 # --- Framing errors --------------------------------------------------------
 
 class ConnectionClosed(Exception):
-    """The peer closed the TCP connection (or it broke)."""
+    """The other side closed the TCP connection, or the connection broke."""
 
 
 class InvalidJSON(Exception):
-    """A frame was received but its payload was not valid UTF-8 JSON.
+    """We received a frame, but its payload was not valid UTF-8 JSON.
 
-    The frame length was valid, so the stream is still in sync and the
-    connection can be kept open -- the server answers with ERROR/INVALID_JSON.
+    The frame length was still valid, so the stream is in sync and we can keep
+    the connection open. The server answers with ERROR/INVALID_JSON.
     """
 
 
 class PDUTooLarge(Exception):
-    """A PDU exceeded MAX_PAYLOAD_BYTES and cannot be framed."""
+    """A PDU is larger than MAX_PAYLOAD_BYTES, so we cannot frame it."""
 
 
 # --- Sending and receiving -------------------------------------------------
 
 def send_pdu(sock: socket.socket, pdu: dict) -> None:
-    """Serialise `pdu` to JSON and write one length-prefixed frame."""
+    """Convert `pdu` to JSON and write it as one length-prefixed frame."""
     payload = json.dumps(pdu).encode("utf-8")
     if len(payload) > MAX_PAYLOAD_BYTES:
         raise PDUTooLarge(f"PDU is {len(payload)} bytes; maximum is {MAX_PAYLOAD_BYTES}")
 
     header = len(payload).to_bytes(LENGTH_PREFIX_BYTES, byteorder="big", signed=False)
-    # sendall loops internally until every byte has been handed to the kernel.
+    # sendall loops on its own until every byte has been given to the kernel.
     sock.sendall(header + payload)
 
 
 def recv_pdu(sock: socket.socket) -> dict:
     """Read exactly one length-prefixed frame and return the decoded PDU.
 
-    Raises ConnectionClosed if the peer hangs up, and InvalidJSON if the
-    payload is not parseable (the caller may then keep the connection open).
+    This raises ConnectionClosed if the other side closes the connection, and
+    InvalidJSON if we cannot parse the payload. In the second case the caller
+    can keep the connection open.
     """
     header = _recv_exactly(sock, LENGTH_PREFIX_BYTES)
     length = int.from_bytes(header, byteorder="big", signed=False)
 
     if length > MAX_PAYLOAD_BYTES:
-        # A frame this large is not valid MTGNP; we cannot trust the stream.
+        # A frame this large is not valid MTGNP, so we cannot trust the stream.
         raise ConnectionClosed(f"Declared PDU length {length} exceeds {MAX_PAYLOAD_BYTES}")
 
     payload = _recv_exactly(sock, length)
@@ -94,15 +94,16 @@ def recv_pdu(sock: socket.socket) -> dict:
 def _recv_exactly(sock: socket.socket, count: int) -> bytes:
     """Read exactly `count` bytes from the socket.
 
-    A single recv() may return fewer bytes than requested, so we loop until we
-    have the whole frame.  This is the heart of correct message framing over a
-    TCP byte stream: TCP has no notion of message boundaries, only bytes.
+    One call to recv() can return fewer bytes than we asked for, so we loop
+    until we have the whole frame. This is the most important part of message
+    framing over TCP, because TCP only carries bytes and does not mark where one
+    message ends and the next one begins.
     """
     chunks = []
     remaining = count
     while remaining > 0:
         chunk = sock.recv(remaining)
-        if not chunk:  # An empty read means the peer performed an orderly close.
+        if not chunk:  # An empty read means the other side closed the connection.
             raise ConnectionClosed("Peer closed the connection")
         chunks.append(chunk)
         remaining -= len(chunk)

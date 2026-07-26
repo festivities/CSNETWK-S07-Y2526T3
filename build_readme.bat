@@ -2,17 +2,17 @@
 REM ---------------------------------------------------------------------------
 REM Build README.pdf from README.md.
 REM
-REM Edit README.md, then run this file -- from a terminal or by double-clicking
-REM it -- to regenerate the PDF that is submitted with the project.
+REM Edit README.md and then run this file, either from a terminal or by
+REM double-clicking it, to build the PDF that we submit with the project.
 REM
-REM Any extra arguments are passed straight to tools\md2pdf.py, so
+REM This passes any extra arguments straight to tools\md2pdf.py, so
 REM     build_readme.bat --keep-html
-REM also leaves the intermediate HTML behind for inspection.
+REM also keeps the HTML file so that we can look at it.
 REM ---------------------------------------------------------------------------
 setlocal
 cd /d "%~dp0"
 
-REM Prefer the Windows launcher, and fall back to python on PATH.
+REM We use the Windows launcher first, and python on the PATH if it is missing.
 set "PY=py -3"
 where py >nul 2>&1 || set "PY=python"
 
@@ -25,7 +25,7 @@ if not "%RC%"=="0" (
     echo README.pdf was NOT built. See the message above.
 )
 
-REM Keep the window open when this was started by double-clicking it.
+REM We keep the window open when someone started this by double-clicking it.
 echo %CMDCMDLINE% | find /i "%~nx0" >nul && pause
 
 exit /b %RC%

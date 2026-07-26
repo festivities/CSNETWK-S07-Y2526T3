@@ -1,15 +1,15 @@
 """
-The fixed, pre-defined card catalog.
+The fixed card catalog.
 
-MTGNP 1.0 does not transfer card data over the wire (RFC Section 1): card costs,
-types, power/toughness and ability text are pre-loaded by the server and by every
-client from a shared out-of-band catalog.  The card IDs exchanged in PDUs are
-keys into this catalog.
+MTGNP 1.0 does not send card data over the wire (RFC Section 1). The server and
+every client load the card costs, types, power and toughness, and ability text
+from a shared catalog before the game starts. The card IDs inside the PDUs are
+only keys into that catalog.
 
-Our catalog is the master card list shipped in `data/`.  A card ID such as
-`lightning_bolt_001` is a *card instance*: the part before the trailing number
-("lightning_bolt") is the catalog key, and the number distinguishes the copies
-of that card in the fixed set.
+Our catalog is the master card list in `data/`. A card ID such as
+`lightning_bolt_001` names one card instance. The part before the last number,
+"lightning_bolt", is the catalog key, and the number tells the copies of that
+card in the fixed set apart.
 """
 
 import csv
@@ -17,14 +17,14 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# The five mana colors, plus generic mana, as used in cost dictionaries.
+# The five mana colors and generic mana, as we use them in cost dictionaries.
 COLORS = ("W", "U", "B", "R", "G")
 GENERIC = "generic"
 
-# Where the shipped master card list lives (repository root / data / ...).
+# Where we keep the master card list, in the data folder of the project.
 CATALOG_PATH = Path(__file__).resolve().parent.parent / "data" / "MTGNP_MASTER-CARD-LIST.tsv"
 
-# A card instance ID is the catalog key followed by "_" and a copy number.
+# A card instance ID is the catalog key, then "_", then a copy number.
 _CARD_ID_PATTERN = re.compile(r"^(?P<base>[a-z_]+)_(?P<copy>\d+)$")
 
 
@@ -32,19 +32,19 @@ _CARD_ID_PATTERN = re.compile(r"^(?P<base>[a-z_]+)_(?P<copy>\d+)$")
 class Card:
     """One entry in the fixed card set."""
 
-    base: str            # Catalog key, e.g. "lightning_bolt".
-    name: str            # Printed name, e.g. "Lightning Bolt".
-    card_type: str       # "Land", "Instant", "Sorcery", "Creature", ...
+    base: str            # Catalog key, for example "lightning_bolt".
+    name: str            # Printed name, for example "Lightning Bolt".
+    card_type: str       # "Land", "Instant", "Sorcery", "Creature", and so on.
     subtype: str
-    color: str           # "W"/"U"/"B"/"R"/"G"/"C"
+    color: str           # "W", "U", "B", "R", "G" or "C".
     cmc: int
-    cost: dict           # {"R": 1, "generic": 1} -- omitted keys mean zero.
-    power: int | None    # None for non-creatures.
+    cost: dict           # {"R": 1, "generic": 1}. A missing key means zero.
+    power: int | None    # None for cards that are not creatures.
     toughness: int | None
-    copies: int          # How many copies of this card exist in the fixed set.
+    copies: int          # How many copies of this card the fixed set contains.
     effect_text: str
 
-    # --- Type helpers (used all over the rules code) --------------------
+    # --- Type helpers, which the rules code uses everywhere --------------
 
     @property
     def is_land(self) -> bool:
@@ -72,7 +72,7 @@ class Card:
 
     @property
     def is_permanent(self) -> bool:
-        """Permanents stay on the battlefield once they resolve."""
+        """A permanent stays on the battlefield after it resolves."""
         return not (self.is_instant or self.is_sorcery)
 
     @property
@@ -83,20 +83,20 @@ class Card:
         return keyword in self.keywords
 
 
-# --- Keyword abilities implemented by this build ---------------------------
+# --- The keyword abilities we implemented ----------------------------------
 #
-# Listed explicitly rather than parsed out of the English effect text, so that
-# it is obvious which keywords this build actually enforces.  Keywords printed
-# on the cards but NOT implemented here (prowess, protection, hexproof, trample,
-# kicker, madness, suspend, regenerate, illusion) are documented as limitations
-# in the README.
+# We list these here instead of reading them out of the English effect text, so
+# that it is clear which keywords our build really enforces. Some keywords are
+# printed on the cards but are not implemented here, such as prowess,
+# protection, hexproof, trample, kicker, madness, suspend, regenerate, and
+# illusion. The README lists them as limitations.
 
-HASTE = "haste"                  # May attack the turn it enters play.
+HASTE = "haste"                  # Can attack on the turn it enters play.
 FIRST_STRIKE = "first_strike"    # Deals damage in the First Strike Damage Step.
 DOUBLE_STRIKE = "double_strike"  # Deals damage in both damage steps.
 DEFENDER = "defender"            # Cannot be declared as an attacker.
-FLYING = "flying"                # Blockable only by creatures with flying.
-VIGILANCE = "vigilance"          # Does not tap when declared as an attacker.
+FLYING = "flying"                # Only creatures with flying can block it.
+VIGILANCE = "vigilance"          # Does not tap when it is declared as an attacker.
 
 KEYWORDS = {
     "goblin_guide": frozenset({HASTE}),
@@ -112,10 +112,10 @@ KEYWORDS = {
 
 # --- Mana sources -----------------------------------------------------------
 #
-# Activating a mana ability does not use the stack and needs no PDU of its own
-# (RFC Section 7.5): the client declares the whole payment when casting, and the
-# server taps these sources to cover it.  Each entry lists the mana symbols one
-# tap of that permanent produces.
+# A mana ability does not use the stack and does not need a PDU of its own (RFC
+# Section 7.5). The client declares the whole payment when it casts a spell, and
+# the server taps these sources to cover that payment. Each entry lists the mana
+# symbols that one tap of the permanent produces.
 
 MANA_SOURCES = {
     "mountain": ("R",),
@@ -135,14 +135,15 @@ _catalog: dict[str, Card] = {}
 
 
 def load_catalog(path: Path | None = None) -> dict[str, Card]:
-    """Load (once) and return the catalog, keyed by catalog base name."""
+    """Load the catalog once and return it, keyed by the catalog base name."""
     global _catalog
     if _catalog:
         return _catalog
 
     path = path or CATALOG_PATH
     with open(path, newline="", encoding="utf-8-sig") as handle:
-        # Row 1 of the file is a human-readable title, row 2 is the header.
+        # The first row of the file is a title for readers, and the second row
+        # is the actual header, so we skip the first one.
         handle.readline()
         for row in csv.DictReader(handle, delimiter="\t"):
             card = _card_from_row(row)
@@ -155,13 +156,14 @@ def load_catalog(path: Path | None = None) -> dict[str, Card]:
 
 
 def _card_from_row(row: dict) -> Card | None:
-    """Build a Card from one TSV row, or None if the row is blank."""
+    """Build a Card from one TSV row, or return None if the row is blank."""
     base = (row.get("Card ID Base") or "").strip()
     if not base:
         return None
 
-    # Colored requirements come from the per-color columns; everything else that
-    # must be paid with any mana comes from the "Generic" column.
+    # The colored requirements come from the per-color columns. The rest of the
+    # cost, which the player can pay with any mana, comes from the "Generic"
+    # column.
     cost = {color: _as_int(row.get(color)) for color in COLORS}
     cost = {color: amount for color, amount in cost.items() if amount > 0}
     generic = _as_int(row.get("Generic"))
@@ -191,7 +193,7 @@ def _as_int(value: str | None) -> int:
 
 
 def _as_optional_int(value: str | None) -> int | None:
-    """Power/toughness are printed as "-" for cards that are not creatures."""
+    """The list prints power and toughness as "-" for cards that are not creatures."""
     text = (value or "").strip()
     if not text or text == "-":
         return None
@@ -204,7 +206,7 @@ def _as_optional_int(value: str | None) -> int | None:
 # --- Card ID helpers -------------------------------------------------------
 
 def base_of(card_id: str) -> str | None:
-    """Return the catalog key for a card instance ID, or None if malformed.
+    """Return the catalog key of a card instance ID, or None if the ID is wrong.
 
     >>> base_of("lightning_bolt_001")
     'lightning_bolt'
@@ -214,19 +216,20 @@ def base_of(card_id: str) -> str | None:
 
 
 def copy_number_of(card_id: str) -> int | None:
-    """Return the copy number of a card instance ID, or None if malformed."""
+    """Return the copy number of a card instance ID, or None if the ID is wrong."""
     match = _CARD_ID_PATTERN.match(card_id or "")
     return int(match.group("copy")) if match else None
 
 
 def lookup(card_id: str) -> Card | None:
-    """Return the Card for a card instance ID, or None if it is not legal."""
+    """Return the Card for a card instance ID, or None if the ID is not legal."""
     base = base_of(card_id)
     return load_catalog().get(base) if base else None
 
 
 def name_of(card_id: str) -> str:
-    """Human-readable name for a card instance ID (falls back to the raw ID)."""
+    """The printed name of a card instance ID. If we cannot find the card, we
+    return the raw ID instead."""
     card = lookup(card_id)
     return card.name if card else card_id
 
@@ -234,8 +237,8 @@ def name_of(card_id: str) -> str:
 def is_legal_card_id(card_id: str) -> bool:
     """True if the ID names a real copy of a real card in the fixed set.
 
-    Both halves matter: the catalog key must exist, and the copy number must be
-    within the number of copies the fixed set actually contains.
+    Both parts of the ID matter. The catalog key has to exist, and the copy
+    number has to be inside the number of copies that the fixed set contains.
     """
     card = lookup(card_id)
     if card is None:

@@ -2,17 +2,17 @@
 Turn structure: every phase and step of a turn, in order (RFC Section 7).
 
     UNTAP STEP
-    UPKEEP STEP           <-- priority window
-    DRAW STEP             <-- priority window
-    PRECOMBAT MAIN PHASE  <-- priority window (sorcery speed for AP)
+    UPKEEP STEP           <-- a priority window
+    DRAW STEP             <-- a priority window
+    PRECOMBAT MAIN PHASE  <-- a priority window, sorcery speed for the AP
     COMBAT PHASE          <-- see combat.py
-    POSTCOMBAT MAIN PHASE <-- priority window (sorcery speed for AP)
-    END STEP              <-- priority window
+    POSTCOMBAT MAIN PHASE <-- a priority window, sorcery speed for the AP
+    END STEP              <-- a priority window
     CLEANUP STEP
 
-Because the engine runs the rules on a single thread, a turn reads as plain
-sequential code: each step announces itself with PHASE_TRANSITION, does its work,
-and (where the RFC says so) opens a priority window that blocks until both
+The engine runs the rules on one thread, so a turn reads as plain sequential
+code. Each step announces itself with PHASE_TRANSITION, does its work, and then
+opens a priority window where the RFC asks for one. That window waits until both
 players have passed.
 """
 
@@ -23,7 +23,7 @@ from .state import GameOver, MAX_HAND_SIZE
 
 
 def play_turn(engine) -> None:
-    """Play one complete turn, ending with the next player becoming active."""
+    """Play one whole turn. At the end the other player becomes the active one."""
     untap_step(engine)
     upkeep_step(engine)
     draw_step(engine)
@@ -39,15 +39,16 @@ def play_turn(engine) -> None:
 # --- Untap Step (RFC Section 7.2) ---------------------------------------
 
 def untap_step(engine) -> None:
-    """Untap the Active Player's permanents. No priority is granted."""
+    """Untap the permanents of the Active Player. We grant no priority here."""
     state = engine.state
     transition(engine, protocol.UNTAP)
 
     active = state.player(state.active_player)
     for permanent in active.battlefield:
         permanent.tapped = False
-        # A creature stops being summoning sick at its controller's Untap Step
-        # (RFC Section 3), which is the first moment the sickness could matter.
+        # A creature loses its summoning sickness at the Untap Step of its
+        # controller (RFC Section 3). This is the first moment where the
+        # sickness would make any difference.
         permanent.summoning_sick = False
 
     active.land_played_this_turn = False
@@ -64,14 +65,14 @@ def upkeep_step(engine) -> None:
 # --- Draw Step (RFC Section 7.4) ----------------------------------------
 
 def draw_step(engine) -> None:
-    """Draw one card for the Active Player, then open a priority window."""
+    """Draw one card for the Active Player, and then open a priority window."""
     state = engine.state
     transition(engine, protocol.DRAW)
 
     if not _skips_first_draw(state):
         active = state.player(state.active_player)
         if active.draw() is None:
-            # A player required to draw from an empty library loses the game
+            # A player who has to draw from an empty library loses the game
             # (RFC Section 6.5).
             raise GameOver(
                 winner_id=state.opponent_of(state.active_player),
@@ -84,17 +85,17 @@ def draw_step(engine) -> None:
 
 
 def _skips_first_draw(state) -> bool:
-    """On the very first turn of the game the first player does not draw."""
+    """The player who goes first does not draw on the first turn of the game."""
     return state.turn == 1 and state.active_player == state.player_order[0]
 
 
 # --- Main Phases (RFC Section 7.5) --------------------------------------
 
 def main_phase(engine, phase: str) -> None:
-    """A Main Phase is simply a priority window at which sorcery speed is legal.
+    """A Main Phase is only a priority window where sorcery speed is legal.
 
-    Land plays and sorcery-speed casts are validated inside priority.py, which
-    checks the current phase.
+    The code in priority.py checks the land plays and the sorcery speed casts,
+    because it also knows which phase we are in.
     """
     transition(engine, phase)
     run_priority_window(engine)
@@ -110,17 +111,19 @@ def end_step(engine) -> None:
 # --- Cleanup Step (RFC Section 7.8) ------------------------------------
 
 def cleanup_step(engine) -> None:
-    """Discard down to seven, clear damage and until-end-of-turn effects.
+    """Discard down to 7 cards, remove the damage, and clear the end of turn effects.
 
-    No priority is granted: in MTGNP 1.0 nothing triggers at cleanup.  The step
-    finishes by advancing the turn counter and switching the Active Player.
+    We grant no priority here, because nothing in MTGNP 1.0 triggers during the
+    cleanup. The step ends by counting the turn up and by switching the Active
+    Player.
     """
     state = engine.state
     transition(engine, protocol.CLEANUP)
 
     _discard_down_to_hand_size(engine)
 
-    # Remove all damage from creatures and clear "until end of turn" effects.
+    # We remove all the damage from the creatures and clear the bonuses that
+    # only last until the end of the turn.
     for permanent in state.all_permanents():
         permanent.damage = 0
         permanent.power_bonus = 0
@@ -128,15 +131,15 @@ def cleanup_step(engine) -> None:
 
     engine.broadcast_state_update()
 
-    # Advance to the next turn.
+    # We move on to the next turn.
     state.turn += 1
     state.active_player = state.non_active_player
 
 
 def _discard_down_to_hand_size(engine) -> None:
-    """Make the Active Player discard until their hand holds seven or fewer.
+    """Make the Active Player discard until their hand holds 7 cards or fewer.
 
-    The seq_num token for each DISCARD is the most recent GAME_STATE_UPDATE sent
+    The seq_num token of each DISCARD is the last GAME_STATE_UPDATE that we sent
     to that player (RFC Section 5.4).
     """
     state = engine.state
@@ -161,13 +164,13 @@ def _discard_down_to_hand_size(engine) -> None:
             player.hand.remove(card_id)
             player.graveyard.append(card_id)
 
-        # Report the reduced hand; if it is still too large this update's
-        # seq_num becomes the token for the next DISCARD.
+        # We report the smaller hand. If the hand is still too big, the seq_num
+        # of this update becomes the token for the next DISCARD.
         token = engine.broadcast_state_update()[player_id]
 
 
 def _check_discard(player, card_ids) -> str | None:
-    """Validate a DISCARD PDU's card_ids against the player's hand."""
+    """Check the card_ids of a DISCARD PDU against the hand of the player."""
     if not isinstance(card_ids, list) or not card_ids:
         return "card_ids must be a non-empty array of cards to discard."
 
@@ -175,5 +178,5 @@ def _check_discard(player, card_ids) -> str | None:
     for card_id in card_ids:
         if card_id not in remaining:
             return f"{card_id} is not in your hand."
-        remaining.remove(card_id)  # Catches the same card listed twice.
+        remaining.remove(card_id)  # This also catches the same card listed twice.
     return None

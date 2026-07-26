@@ -1,13 +1,13 @@
 """
-Unit tests for the rules engine, with no sockets involved.
+Unit tests for the rules engine, with no sockets at all.
 
-These drive the rules modules directly against a hand-built GameState, which makes
-the combat arithmetic, mana payment and card effects fast and completely
-deterministic -- no shuffling, no network, no timing.
+These tests use the rules modules directly on a GameState that we build by hand.
+This makes the combat math, the mana payment and the card effects fast and always
+the same, because there is no shuffle, no network, and no timing involved.
 
-A real GameEngine is used with an empty `connections` map: GameEngine.send simply
-returns when a player has no connection, so broadcasts become no-ops and the rules
-can be exercised on their own.
+We use a real GameEngine with an empty `connections` map. GameEngine.send just
+returns when a player has no connection, so a broadcast does nothing and we can
+test the rules on their own.
 
     python -m unittest discover -s tests -v
 """
@@ -27,7 +27,7 @@ ONE, TWO = "player_1", "player_2"
 
 
 def make_engine():
-    """A ready-to-use engine on turn 1 with player_1 active and no connections."""
+    """An engine that is ready to use on turn 1, with player_1 active and no connections."""
     state = GameState([ONE, TWO])
     state.player_order = [ONE, TWO]
     state.active_player = ONE
@@ -49,11 +49,11 @@ def put(state, player_id, card_id, tapped=False, summoning_sick=False):
 
 
 class ScriptedEngine(GameEngine):
-    """An engine whose `await_action` replays canned client PDUs.
+    """An engine whose `await_action` gives back client PDUs that we prepared.
 
-    This exercises the parts of combat that block waiting for a declaration --
-    the tapping of attackers, and the ASSIGN_DAMAGE_ORDER retry loop -- without
-    needing sockets or a second player.
+    This lets us test the parts of combat that wait for a declaration, such as
+    the tapping of the attackers and the retry loop of ASSIGN_DAMAGE_ORDER,
+    without any sockets and without a second player.
     """
 
     def __init__(self, state, responses):
@@ -75,7 +75,7 @@ class ScriptedEngine(GameEngine):
 class FirstStrikeTests(unittest.TestCase):
 
     def test_first_strike_kills_the_blocker_before_it_strikes_back(self):
-        """White Knight (2/2 first strike) beats Grizzly Bears (2/2) unharmed."""
+        """White Knight, a 2/2 with first strike, beats a 2/2 Grizzly Bears and takes no damage."""
         engine, state = make_engine()
         knight = put(state, ONE, "white_knight_001")
         bears = put(state, TWO, "grizzly_bears_001")
@@ -84,14 +84,15 @@ class FirstStrikeTests(unittest.TestCase):
 
         self.assertTrue(combat._anyone_has_first_strike(engine))
 
-        # First Strike Damage Step: only the knight deals damage.
+        # In the First Strike Damage Step, only the knight deals damage.
         combat.deal_combat_damage(engine, first_strike_step=True)
         self.assertIsNone(state.find_permanent("grizzly_bears_001"))
         self.assertIn("grizzly_bears_001", state.player(TWO).graveyard)
         self.assertEqual(knight.damage, 0)
 
-        # Regular Combat Damage Step: a first striker does not strike twice, and
-        # the blocker is already dead, so nothing further happens.
+        # In the normal Combat Damage Step, a creature with first strike does not
+        # deal damage a second time, and the blocker is already dead, so nothing
+        # else happens here.
         combat.deal_combat_damage(engine, first_strike_step=False)
         self.assertEqual(knight.damage, 0)
         self.assertIsNotNone(state.find_permanent("white_knight_001"))
@@ -129,7 +130,7 @@ class FirstStrikeTests(unittest.TestCase):
         self.assertEqual(state.player(TWO).life, 18)
 
     def test_blocked_attacker_never_hits_the_player(self):
-        """MTGNP 1.0 has no trample (RFC Section 9.7)."""
+        """MTGNP 1.0 does not have trample (RFC Section 9.7)."""
         engine, state = make_engine()
         put(state, ONE, "leatherback_baloth_001")   # 4/5
         put(state, TWO, "ornithopter_001")          # 0/2
@@ -137,7 +138,7 @@ class FirstStrikeTests(unittest.TestCase):
         state.blocks = {"leatherback_baloth_001": ["ornithopter_001"]}
 
         combat.deal_combat_damage(engine, first_strike_step=False)
-        self.assertEqual(state.player(TWO).life, 20)      # No damage got through.
+        self.assertEqual(state.player(TWO).life, 20)      # No damage reached the player.
         self.assertIsNone(state.find_permanent("ornithopter_001"))
 
 
@@ -160,13 +161,13 @@ class DamageOrderTests(unittest.TestCase):
             self.state.blocks["leatherback_baloth_001"])
 
     def test_lethal_is_assigned_in_order_then_the_rest_overflows(self):
-        """Bears first: 2 (lethal) to Bears, the remaining 2 to the Lions."""
+        """With the Bears first, they take the 2 that kills them, and the Lions take the other 2."""
         events = self.assign(["grizzly_bears_001", "savannah_lions_001"])
         self.assertEqual([(e["target"], e["amount"]) for e in events],
                          [("grizzly_bears_001", 2), ("savannah_lions_001", 2)])
 
     def test_a_different_order_changes_the_split(self):
-        """Lions first: only 1 is lethal there, so Bears receives 3."""
+        """With the Lions first, only 1 damage kills them, so the Bears take 3."""
         events = self.assign(["savannah_lions_001", "grizzly_bears_001"])
         self.assertEqual([(e["target"], e["amount"]) for e in events],
                          [("savannah_lions_001", 1), ("grizzly_bears_001", 3)])
@@ -195,7 +196,7 @@ class DeclarationLegalityTests(unittest.TestCase):
         self.assertIn("tapped", problem("grizzly_bears_001"))
         self.assertIn("summoning sickness", problem("grizzly_bears_002"))
         self.assertIn("defender", problem("wall_of_stone_001"))
-        # Haste beats summoning sickness.
+        # Haste lets a creature attack even with summoning sickness.
         self.assertIsNone(problem("monastery_swiftspear_001"))
 
     def test_attacking_twice_with_one_creature_is_rejected(self):
@@ -209,9 +210,9 @@ class DeclarationLegalityTests(unittest.TestCase):
 
     def test_flying_can_only_be_blocked_by_flying(self):
         engine, state = make_engine()
-        put(state, ONE, "air_elemental_001")          # 4/4 flying
-        put(state, TWO, "grizzly_bears_001")          # no flying
-        put(state, TWO, "ornithopter_001")            # flying
+        put(state, ONE, "air_elemental_001")          # A 4/4 with flying.
+        put(state, TWO, "grizzly_bears_001")          # This one has no flying.
+        put(state, TWO, "ornithopter_001")            # This one has flying.
         state.attackers = {"air_elemental_001": TWO}
 
         ground = combat._check_blockers(engine, TWO, [
@@ -236,7 +237,7 @@ class DeclarationLegalityTests(unittest.TestCase):
         self.assertIn("more than one attacker", problem)
 
     def test_summoning_sick_creature_may_still_block(self):
-        """Summoning sickness stops attacking and tap abilities, not blocking."""
+        """Summoning sickness stops attacking and tap abilities, but it does not stop blocking."""
         engine, state = make_engine()
         put(state, ONE, "grizzly_bears_001")
         put(state, TWO, "savannah_lions_001", summoning_sick=True)
@@ -247,7 +248,7 @@ class DeclarationLegalityTests(unittest.TestCase):
 
 
 class DeclarationApplicationTests(unittest.TestCase):
-    """The declaration steps, driven with scripted client replies."""
+    """The declaration steps, which we drive with client replies that we prepared."""
 
     def declare(self, state, attackers):
         engine = ScriptedEngine(state, [
@@ -256,7 +257,7 @@ class DeclarationApplicationTests(unittest.TestCase):
         return engine
 
     def test_declaring_an_attacker_taps_it(self):
-        """Declaring an attacker taps it immediately (RFC Section 9.3)."""
+        """An attacker taps as soon as the player declares it (RFC Section 9.3)."""
         engine, state = make_engine()
         bears = put(state, ONE, "grizzly_bears_001")
         self.declare(state, [{"creature_id": "grizzly_bears_001", "target": TWO}])
@@ -265,7 +266,7 @@ class DeclarationApplicationTests(unittest.TestCase):
         self.assertEqual(state.attackers, {"grizzly_bears_001": TWO})
 
     def test_vigilance_attacker_does_not_tap(self):
-        """Serra Angel has vigilance, so attacking leaves it untapped."""
+        """Serra Angel has vigilance, so it stays untapped when it attacks."""
         engine, state = make_engine()
         angel = put(state, ONE, "serra_angel_001")
         self.declare(state, [{"creature_id": "serra_angel_001", "target": TWO}])
@@ -295,7 +296,7 @@ class DeclarationApplicationTests(unittest.TestCase):
         self.assertEqual(state.blocks, {"grizzly_bears_001": ["savannah_lions_001"]})
 
     def test_assign_damage_order_validates_then_records(self):
-        """One ASSIGN_DAMAGE_ORDER per multiply-blocked attacker (RFC 9.5)."""
+        """One ASSIGN_DAMAGE_ORDER for each attacker that two or more creatures block (RFC 9.5)."""
         engine, state = make_engine()
         put(state, ONE, "leatherback_baloth_001")
         put(state, TWO, "grizzly_bears_001")
@@ -305,14 +306,14 @@ class DeclarationApplicationTests(unittest.TestCase):
                         ["grizzly_bears_001", "savannah_lions_001"]}
 
         engine = ScriptedEngine(state, [
-            # An attacker that is not awaiting an order.
+            # An attacker that does not need an order.
             {"type": protocol.ASSIGN_DAMAGE_ORDER, "seq_num": 11,
              "attacker_id": "grizzly_bears_001", "blocker_order": []},
-            # Not a permutation of that attacker's blockers.
+            # An order that does not list the blockers of that attacker.
             {"type": protocol.ASSIGN_DAMAGE_ORDER, "seq_num": 11,
              "attacker_id": "leatherback_baloth_001",
              "blocker_order": ["grizzly_bears_001"]},
-            # Valid.
+            # A legal one.
             {"type": protocol.ASSIGN_DAMAGE_ORDER, "seq_num": 11,
              "attacker_id": "leatherback_baloth_001",
              "blocker_order": ["savannah_lions_001", "grizzly_bears_001"]},
@@ -326,7 +327,7 @@ class DeclarationApplicationTests(unittest.TestCase):
                          [protocol.ILLEGAL_ACTION, protocol.ILLEGAL_ACTION])
 
     def test_damage_follows_the_chosen_order_end_to_end(self):
-        """The recorded order drives the actual damage assignment."""
+        """The order that we recorded decides how the damage really gets assigned."""
         engine, state = make_engine()
         put(state, ONE, "leatherback_baloth_001")    # 4/5
         bears = put(state, TWO, "grizzly_bears_001")   # 2/2
@@ -339,8 +340,9 @@ class DeclarationApplicationTests(unittest.TestCase):
 
         combat.deal_combat_damage(engine, first_strike_step=False)
 
-        # Lions took 1 (lethal), Bears took the remaining 3; both died, and the
-        # attacker took 2 + 2 back but survives on 5 toughness.
+        # The Lions took the 1 damage that kills them and the Bears took the
+        # other 3, so both died. The attacker took 2 and 2 back, but it survives
+        # because it has 5 toughness.
         self.assertIsNone(state.find_permanent("savannah_lions_001"))
         self.assertIsNone(state.find_permanent("grizzly_bears_001"))
         attacker = state.find_permanent("leatherback_baloth_001")
@@ -380,7 +382,7 @@ class StateBasedActionTests(unittest.TestCase):
         self.assertEqual(caught.exception.loser_id, TWO)
 
     def test_simultaneous_death_loses_for_the_active_player(self):
-        """If both players hit zero at once, the Active Player loses."""
+        """When both players reach zero life at the same time, the Active Player loses."""
         engine, state = make_engine()
         state.active_player = ONE
         state.player(ONE).life = -1
@@ -423,7 +425,7 @@ class ManaTests(unittest.TestCase):
         self.assertEqual(tapped, [ring])
 
     def test_colored_requirements_are_funded_before_generic(self):
-        """Searing Spear needs {1}{R}: the Mountain must go to the red pip."""
+        """Searing Spear costs {1}{R}, so the Mountain has to pay the red part."""
         engine, state = make_engine()
         put(state, ONE, "mountain_001")
         put(state, ONE, "forest_001")
@@ -433,17 +435,17 @@ class ManaTests(unittest.TestCase):
     def test_tapped_and_summoning_sick_sources_are_unavailable(self):
         engine, state = make_engine()
         put(state, ONE, "forest_001", tapped=True)
-        # A creature with summoning sickness cannot use a tap ability for mana.
+        # A creature with summoning sickness cannot use a tap ability to make mana.
         put(state, ONE, "llanowar_elves_001", summoning_sick=True)
         with self.assertRaises(mana.InsufficientMana):
             mana.pay(state.player(ONE), {"G": 1})
 
-        # Once the sickness wears off, the Elves can be tapped.
+        # After the sickness goes away, we can tap the Elves.
         state.player(ONE).battlefield[1].summoning_sick = False
         self.assertEqual(len(mana.pay(state.player(ONE), {"G": 1})), 1)
 
     def test_nothing_is_tapped_when_the_payment_cannot_be_met(self):
-        """Payment is atomic: a failure must leave the battlefield untouched."""
+        """The payment happens in one step, so a failure must leave the battlefield alone."""
         engine, state = make_engine()
         mountain = put(state, ONE, "mountain_001")
         with self.assertRaises(mana.InsufficientMana):
@@ -452,7 +454,7 @@ class ManaTests(unittest.TestCase):
 
     def test_declared_payment_must_equal_the_printed_cost(self):
         bolt = cards.lookup("lightning_bolt_001")
-        mana.check_matches_cost({"R": 1}, bolt.cost)          # Exact: fine.
+        mana.check_matches_cost({"R": 1}, bolt.cost)          # This one matches exactly.
         with self.assertRaises(mana.InsufficientMana):
             mana.check_matches_cost({}, bolt.cost)
         with self.assertRaises(mana.InsufficientMana):
@@ -470,7 +472,7 @@ class ManaTests(unittest.TestCase):
 class EffectTests(unittest.TestCase):
 
     def resolve(self, engine, card_id, controller, targets):
-        """Push a spell and resolve it, returning its state_changes."""
+        """Put a spell on the stack, resolve it, and return its state_changes."""
         item = StackItem(
             stack_item_id=engine.state.next_stack_item_id(),
             item_type=protocol.ITEM_SPELL, source=card_id,
@@ -489,7 +491,7 @@ class EffectTests(unittest.TestCase):
 
     def test_flame_slash_marks_damage_on_a_creature(self):
         engine, state = make_engine()
-        wall = put(state, TWO, "wall_of_stone_001")     # 0/8 survives 4 damage
+        wall = put(state, TWO, "wall_of_stone_001")     # A 0/8, so it survives 4 damage.
         self.resolve(engine, "flame_slash_001", ONE, ["wall_of_stone_001"])
         self.assertEqual(wall.damage, 4)
         self.assertEqual(engine.check_state_based_actions(), [])
@@ -502,8 +504,8 @@ class EffectTests(unittest.TestCase):
 
     def test_doom_blade_cannot_target_a_black_creature(self):
         engine, state = make_engine()
-        put(state, TWO, "gray_merchant_001")        # black
-        put(state, TWO, "grizzly_bears_001")        # green
+        put(state, TWO, "gray_merchant_001")        # This one is black.
+        put(state, TWO, "grizzly_bears_001")        # This one is green.
         spec = effects.SPELL_EFFECTS["doom_blade"][0]
 
         self.assertFalse(effects.is_legal_target(state, spec, "gray_merchant_001", ONE))
@@ -511,12 +513,12 @@ class EffectTests(unittest.TestCase):
 
     def test_swords_to_plowshares_exiles_and_gives_life(self):
         engine, state = make_engine()
-        put(state, TWO, "leatherback_baloth_001")   # power 4
+        put(state, TWO, "leatherback_baloth_001")   # This one has power 4.
         self.resolve(engine, "swords_to_plowshares_001", ONE, ["leatherback_baloth_001"])
 
         self.assertIsNone(state.find_permanent("leatherback_baloth_001"))
         self.assertIn("leatherback_baloth_001", state.player(TWO).exile)
-        # Its controller -- the opponent -- gains life equal to its power.
+        # Its controller, who is the opponent here, gains life equal to its power.
         self.assertEqual(state.player(TWO).life, 24)
 
     def test_unsummon_returns_a_creature_to_its_owners_hand(self):
@@ -558,15 +560,15 @@ class EffectTests(unittest.TestCase):
 
         self.assertTrue(effects.is_legal_target(state, spec, "grizzly_bears_001", ONE))
         self.assertFalse(effects.is_legal_target(state, spec, "savannah_lions_001", ONE))
-        # A land in the graveyard is not a creature card.
+        # A land in the graveyard is not a creature card, so it is not a legal target.
         state.player(ONE).graveyard.append("mountain_001")
         self.assertFalse(effects.is_legal_target(state, spec, "mountain_001", ONE))
 
     def test_devotion_to_black_counts_black_mana_symbols(self):
         engine, state = make_engine()
-        put(state, ONE, "gray_merchant_001")    # costs {3}{B}{B} -> 2 symbols
-        put(state, ONE, "black_knight_001")     # costs {B}{B}     -> 2 symbols
-        put(state, ONE, "mountain_001")         # no black symbols
+        put(state, ONE, "gray_merchant_001")    # Costs {3}{B}{B}, so 2 symbols.
+        put(state, ONE, "black_knight_001")     # Costs {B}{B}, so 2 symbols.
+        put(state, ONE, "mountain_001")         # This one has no black symbols.
         self.assertEqual(effects.devotion_to_black(state, ONE), 4)
 
     def test_gray_merchant_drains_and_gains(self):
@@ -582,10 +584,10 @@ class EffectTests(unittest.TestCase):
         self.assertEqual(state.player(ONE).life, 22)
 
     def test_cards_without_an_implemented_effect_are_not_castable(self):
-        """Pacifism is an Aura; attachments are out of scope for this build."""
+        """Pacifism is an Aura, and we left the cards that attach to others out of our build."""
         self.assertIsNone(effects.target_spec_for_spell(cards.lookup("pacifism_001")))
         self.assertIsNone(effects.target_spec_for_spell(cards.lookup("ponder_001")))
-        # Permanents need no implemented effect: they simply enter the battlefield.
+        # A permanent needs no effect at all, because it only enters the battlefield.
         self.assertEqual(effects.target_spec_for_spell(cards.lookup("grizzly_bears_001")),
                          effects.NO_TARGET)
 
@@ -602,12 +604,12 @@ class StackResolutionTests(unittest.TestCase):
             source="flame_slash_001", controller=ONE,
             targets=["grizzly_bears_001"]))
 
-        # The target leaves the battlefield before the spell resolves.
+        # The target leaves the battlefield before the spell can resolve.
         state.player(TWO).battlefield.clear()
         priority.resolve_top_of_stack(engine)
 
         self.assertEqual(state.stack, [])
-        # A fizzled sorcery still goes to its owner's graveyard.
+        # A sorcery that fizzled still goes to the graveyard of its owner.
         self.assertIn("flame_slash_001", state.player(ONE).graveyard)
         self.assertEqual(state.player(TWO).life, 20)
 
@@ -652,7 +654,7 @@ class StackResolutionTests(unittest.TestCase):
                 stack_item_id=f"stk_{index:02d}", item_type=protocol.ITEM_SPELL,
                 source=card_id, controller=ONE, targets=[TWO]))
 
-        # Shock was added last, so it resolves first: 20 - 2 = 18.
+        # We added Shock last, so it resolves first, and 20 - 2 gives 18.
         priority.resolve_top_of_stack(engine)
         self.assertEqual(state.player(TWO).life, 18)
         priority.resolve_top_of_stack(engine)
@@ -673,7 +675,7 @@ class VisibleStateTests(unittest.TestCase):
         self.assertEqual(view["hand"], {ONE: ["lightning_bolt_001", "mountain_001"]})
         self.assertEqual(view["hand_counts"], {TWO: 1})
         self.assertNotIn(TWO, view["hand"])
-        # Libraries are counts only, never contents.
+        # A library is only a count, and never a list of its cards.
         self.assertEqual(view["library_counts"][ONE], 5)
         self.assertNotIn("library", view)
 
@@ -687,7 +689,7 @@ class VisibleStateTests(unittest.TestCase):
         self.assertEqual(entries["grizzly_bears_001"]["power"], 2)
         self.assertEqual(entries["grizzly_bears_001"]["damage"], 1)
         self.assertIn("summoning_sick", entries["grizzly_bears_001"])
-        # A non-creature carries only its id and tapped state.
+        # A card that is not a creature only carries its id and its tapped state.
         self.assertEqual(set(entries["mountain_001"]), {"id", "tapped"})
 
 
